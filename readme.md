@@ -1,6 +1,7 @@
 # Magic The GAN
 A neural network for generating playing cards.  
-The project utilizes a GAN architechture for the NN.
+The project utilizes a GAN architechture for the NN.  
+The specific GAN architechture is inspired by BEGAN (https://arxiv.org/abs/1703.10717).
 
 
 ## Dependencies
@@ -25,3 +26,5 @@ These sources have provided inspiration and information during this project:
 - http://mtgjson.com
 - http://gatherer.wizards.com
 - http://guimperarnau.com/blog/2017/11/Fantastic-GANs-and-where-to-find-them-II
+- https://blog.heuritech.com/2017/04/11/began-state-of-the-art-generation-of-faces-with-generative-adversarial-networks/
+- https://arxiv.org/abs/1703.10717

@@ -1,0 +1,120 @@
+"""
+    Tensorflow GAN model
+"""
+from pathlib import Path
+import tensorflow as tf
+
+DIRECTORY = 'network'
+IMAGE_LIST = Path('data') / 'images.txt'
+IMAGE_WIDTH = 224
+IMAGE_HEIGHT = 320
+BATCH_SIZE = 4
+CODE_SIZE = 200
+
+def _read_image(filename):
+    string = tf.read_file(filename)
+    decoded = tf.image.decode_image(string, 3)
+    cropped = tf.image.resize_image_with_crop_or_pad(decoded, IMAGE_HEIGHT, IMAGE_WIDTH)
+    factor = 1 / 255
+    floated = tf.to_float(cropped)*factor
+    return floated
+
+def get_image_only_data(list_file=IMAGE_LIST, batch_size=BATCH_SIZE):
+    """
+        Returns a dataset containing only images
+    """
+    with tf.device('/cpu:0'):
+        textfile = tf.data.TextLineDataset(str(list_file))
+        shuffled = textfile.cache().repeat().shuffle(10000)
+    images = shuffled.map(_read_image, 8)
+    batch = images.batch(batch_size).make_one_shot_iterator().get_next()
+    return tf.reshape(batch, (batch_size, IMAGE_HEIGHT, IMAGE_WIDTH, 3))
+
+def _encoder(image, layers, bottleneck=CODE_SIZE):
+    layer = image
+    for i in range(layers*2):
+        size = 16 * (i//2-i//4+1)
+        layer7 = tf.layers.conv2d(layer, size, 7, i%2+1, 'same', activation=tf.nn.leaky_relu, name='conv2d_enc_%d_7'%i)
+        layer5 = tf.layers.conv2d(layer, size, 5, i%2+1, 'same', activation=tf.nn.leaky_relu, name='conv2d_enc_%d_5'%i)
+        layer3 = tf.layers.conv2d(layer, size, 3, i%2+1, 'same', activation=tf.nn.leaky_relu, name='conv2d_enc_%d_3'%i)
+        layer = tf.concat([layer3, layer5, layer7], -1, name="conv2d_enc_%d"%i)
+    layer = tf.layers.flatten(layer, name='flatten_enc')
+    layer = tf.layers.dense(layer, bottleneck, activation=tf.nn.relu, name='dense_enc')
+    return layer
+
+def _decoder(code, width=IMAGE_WIDTH, height=IMAGE_HEIGHT, layers=5):
+    w = width // (1<<layers)
+    h = height // (1<<layers)
+    size = 32
+    layer = tf.layers.dense(code, w*h*size, name='dense_dec')
+    layer = tf.reshape(layer, (-1, h, w, size))
+    for i in range(layers*2+2):
+        layer7 = tf.layers.conv2d(layer, size, 7, 1, 'same', activation=tf.nn.leaky_relu, name='conv2d_dec_%d_7'%i)
+        layer5 = tf.layers.conv2d(layer, size, 5, 1, 'same', activation=tf.nn.leaky_relu, name='conv2d_dec_%d_5'%i)
+        layer3 = tf.layers.conv2d(layer, size, 3, 1, 'same', activation=tf.nn.leaky_relu, name='conv2d_dec_%d_3'%i)
+        layer = tf.concat([layer3, layer5, layer7], -1, name="conv2d_dec_%d"%i)
+        if i == layers*2 +1:
+            layer = tf.layers.conv2d(layer, 3, 3, 1, 'same', name='conv2d_dec_final')
+            layer = tf.maximum(0.0, tf.minimum(1.0, layer))
+        elif i%2 == 1:
+            w *= 2
+            h *= 2
+            layer = tf.image.resize_nearest_neighbor(layer, (h, w), name='resize_dec_%d'%(i//2))
+    return layer
+
+def _add_noise(image, batch_size=BATCH_SIZE, max_amount=0.3, no_noise=0.2):
+    noise = tf.maximum(tf.random_uniform(batch_size, 0.0, no_noise+max_amount) - no_noise, 0.0)
+    image = tf.maximum(0.0, tf.minimum(1.0, image + tf.random_uniform(tf.shape(image), -1.0, 1.0)*noise))
+    return image
+
+
+def generator(input_size=CODE_SIZE, batch_size=BATCH_SIZE, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH):
+    """
+        The generator neural network for the GAN architechture
+    """
+    with tf.variable_scope('generator'):
+        #Generate random input
+        prev_layer = tf.random_uniform((batch_size, input_size), -1.0, 1.0)
+        #generator == decoder
+        prev_layer = _decoder(prev_layer, image_width, image_height, 5)
+        return prev_layer
+
+def discriminator(image, reuse=False, code_size=CODE_SIZE, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH):
+    """
+        The discriminator neural network for the GAN architechture
+    """
+    with tf.variable_scope('discriminator', reuse=reuse):
+        #autoencoder
+        prev_layer = _encoder(image, 5, code_size)
+        prev_layer = _decoder(prev_layer, image_width, image_height, 5)
+        return prev_layer
+
+
+def trainer(real_image, fake_image, real_result, fake_result):
+    """
+        The trainer for the GAN
+    """
+    # losses
+    L_x = tf.reduce_mean(tf.abs(real_image-real_result), name="L_x")
+    L_g = tf.reduce_mean(tf.abs(fake_image-fake_result), name="L_G")
+    # hyperparameters
+    gamma = 0.5     # higher == more diversity, lower == better quality
+    lmbd = 0.001    # learning rate for k (and k tries to keep L_g /L_x = gamma)
+    k = tf.Variable(gamma, False, name='kt')
+    k = tf.assign(k, k + lmbd*(gamma*L_x-L_g), name='kt1')
+    #training
+    L_D = tf.subtract(L_x, k*L_g, name='L_D')
+    L_G = L_g
+    optimizer = tf.train.AdamOptimizer(0.0001)
+    update_ops = tf.get_collection(tf.GraphKeys.UPDATE_OPS)
+    with tf.control_dependencies(update_ops):
+        train_op_d = optimizer.minimize(L_D, tf.train.get_or_create_global_step(), tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='discriminator'))
+        train_op_g = optimizer.minimize(L_G, var_list=tf.get_collection(tf.GraphKeys.TRAINABLE_VARIABLES, scope='generator'))
+    #summary
+    tf.summary.scalar("Measure", L_x+tf.abs(gamma*L_x-L_g))
+    tf.summary.scalar("kt", k)
+    tf.summary.scalar("LossD", L_D)
+    tf.summary.scalar("LossG", L_g)
+    tf.summary.scalar("LossX", L_x)
+    tf.summary.image("card", fake_image, 4)
+    return tf.group(k, train_op_d, train_op_g)
