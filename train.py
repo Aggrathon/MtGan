@@ -4,7 +4,7 @@
 import os
 from timeit import default_timer as timer
 import tensorflow as tf
-from model import get_image_only_data, generator, discriminator, trainer, DIRECTORY
+from model import get_image_only_data, generator, discriminator, trainer, DIRECTORY, ART_LIST
 
 def train():
     """
@@ -14,7 +14,7 @@ def train():
     new_time = timer()
     os.makedirs(DIRECTORY, exist_ok=True)
     tf.logging.set_verbosity(tf.logging.DEBUG)
-    ri = get_image_only_data()
+    ri = get_image_only_data(ART_LIST)
     fi = generator()
     rd, fd = tf.split(discriminator(tf.concat([ri, fi], 0)), 2, 0)
     train_op = trainer(ri, fi, rd, fd)

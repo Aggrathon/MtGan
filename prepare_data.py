@@ -13,10 +13,12 @@ import matplotlib.pyplot as plt
 
 DIRECTORY = Path("data")
 IMAGES = DIRECTORY / 'images'
+ART = DIRECTORY / 'art'
 DB_FILE = DIRECTORY / 'all_cards.json'
 SIZE_FILE = DIRECTORY / 'sizes.csv'
 OUT_FILE = DIRECTORY / 'cards.csv'
 IMAGE_FILE = DIRECTORY / 'images.txt'
+ART_FILE = DIRECTORY / 'art.txt'
 
 def download_db(overwrite=False):
     """
@@ -122,7 +124,9 @@ def cull_cards(overwrite=False):
             os.remove(OUT_FILE)
         if os.path.exists(IMAGE_FILE):
             os.remove(IMAGE_FILE)
-    if not os.path.isfile(OUT_FILE) or not os.path.isfile(IMAGE_FILE):
+        if os.path.exists(ART_FILE):
+            os.remove(ART_FILE)
+    if not os.path.isfile(OUT_FILE) or not os.path.isfile(IMAGE_FILE) or not os.path.isfile(ART_FILE):
         print("Removing special cards and stripping data")
         db = pd.read_json(DB_FILE, 'records', lines=True, encoding='utf-8')
         #Keep only normal cards
@@ -136,14 +140,45 @@ def cull_cards(overwrite=False):
         db = db[~mask]
         #Add image path to data
         db = db.assign(image=db['multiverseid'].transform(lambda f: str(IMAGES / ("%d.jpg"%int(f)))))
+        db = db.assign(art=db['multiverseid'].transform(lambda f: str(ART / ("%d.jpg"%int(f)))))
         #Remove unnecessary data
         db = db.filter(items=['name', 'manaCost', 'cmc', 'colors', 'types', 'subtypes', 'rarity',\
-            'text', 'flavor', 'power', 'toughness', 'loyalty', 'image'])
+            'text', 'flavor', 'power', 'toughness', 'loyalty', 'image', 'art'])
         #Save result
         with open(OUT_FILE, 'w', encoding='utf-8') as file:
             db.to_csv(file, encoding='utf-8', index=False, quoting=csv.QUOTE_NONNUMERIC)
         with open(IMAGE_FILE, 'w', encoding='utf-8') as file:
-            db['image'].to_csv(file, index=False, encoding='utf-8', quoting=csv.QUOTE_NONE)
+            db['image'].to_csv(file, index=False, encoding='utf-8')
+        with open(ART_FILE, 'w', encoding='utf-8') as file:
+            db['art'].to_csv(file, index=False, encoding='utf-8')
+        print()
+
+def crop_art(overwrite=False):
+    """
+    Crop the card images to only show the art
+    tl =    (26, 37)       (19, 37)
+    tr =    (197, 37)      (203, 37)
+    bl =    (26, 168)      (19, 171)
+    br =    (197, 168)     (203, 171)
+    w =     171            184
+    h =     131            134
+    """
+    os.makedirs(ART, exist_ok=True)
+    x1 = 23
+    x2 = 199
+    y1 = 40
+    y2 = 168
+    db = pd.read_csv(str(OUT_FILE), encoding='utf-8')
+    print("Cropping the art from the cards")
+    for i, line in db.iterrows():
+        img_path = line['image']
+        art_path = line['art']
+        if os.path.isfile(img_path):
+            if overwrite and os.path.exists(art_path):
+                os.remove(art_path)
+            if not os.path.exists(art_path):
+                img = Image.open(img_path)
+                img.crop((23, 40, 199, 168)).convert("RGB").save(art_path, quality=95)
     print()
 
 #TODO: Transform into TfRecords?
@@ -155,3 +190,4 @@ if __name__ == "__main__":
     check_image_dimensions()
     #plot_image_dimensions()
     cull_cards()
+    crop_art()

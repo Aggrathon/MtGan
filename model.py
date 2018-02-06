@@ -6,10 +6,12 @@ import tensorflow as tf
 
 DIRECTORY = 'network'
 IMAGE_LIST = Path('data') / 'images.txt'
-IMAGE_WIDTH = 224
-IMAGE_HEIGHT = 320
-BATCH_SIZE = 8
+ART_LIST = Path('data') / 'art.txt'
+IMAGE_WIDTH = 176
+IMAGE_HEIGHT = 128
+BATCH_SIZE = 32
 CODE_SIZE = 200
+LAYERS = 4
 
 def _read_image(filename):
     string = tf.read_file(filename)
@@ -75,7 +77,7 @@ def _add_noise(image, batch_size=BATCH_SIZE, max_amount=0.3, no_noise=0.2):
     return image
 
 
-def generator(input_size=CODE_SIZE, batch_size=BATCH_SIZE, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH):
+def generator(input_size=CODE_SIZE, batch_size=BATCH_SIZE, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH, layers=LAYERS):
     """
         The generator neural network for the GAN architechture
     """
@@ -83,17 +85,17 @@ def generator(input_size=CODE_SIZE, batch_size=BATCH_SIZE, image_height=IMAGE_HE
         #Generate random input
         prev_layer = tf.random_uniform((batch_size, input_size), -1.0, 1.0)
         #generator == decoder
-        prev_layer = _decoder(prev_layer, image_width, image_height, 5)
+        prev_layer = _decoder(prev_layer, image_width, image_height, layers)
         return prev_layer
 
-def discriminator(image, code_size=CODE_SIZE, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH):
+def discriminator(image, code_size=CODE_SIZE, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH, layers=LAYERS):
     """
         The discriminator neural network for the GAN architechture
     """
     with tf.variable_scope('discriminator'):
         #autoencoder
-        prev_layer = _encoder(image, 5, code_size)
-        prev_layer = _decoder(prev_layer, image_width, image_height, 5)
+        prev_layer = _encoder(image, layers, code_size)
+        prev_layer = _decoder(prev_layer, image_width, image_height, layers)
         return prev_layer
 
 
