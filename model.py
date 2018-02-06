@@ -6,8 +6,8 @@ import tensorflow as tf
 
 DIRECTORY = 'network'
 IMAGE_LIST = Path('data') / 'images.txt'
-IMAGE_WIDTH = 208
-IMAGE_HEIGHT = 304
+IMAGE_WIDTH = 224
+IMAGE_HEIGHT = 320
 BATCH_SIZE = 8
 CODE_SIZE = 200
 
@@ -32,38 +32,39 @@ def get_image_only_data(list_file=IMAGE_LIST, batch_size=BATCH_SIZE):
 
 def _encoder(image, layers, bottleneck=CODE_SIZE):
     layer = image
+    shortcuts = []
     for i in range(layers*2):
-        size = 16 * int(i**0.5+1.0)
+        size = 16 * (i//2+1)
         if i%2 == 1 and i < layers:
             layer = tf.layers.batch_normalization(layer)
-        layer7 = tf.layers.conv2d(layer, size//2, 7, i%2+1, 'same', activation=tf.nn.elu, name='conv2d_enc_%d_7'%i)
-        layer5 = tf.layers.conv2d(layer, size//2, 5, i%2+1, 'same', activation=tf.nn.elu, name='conv2d_enc_%d_5'%i)
-        layer3 = tf.layers.conv2d(layer, size, 3, i%2+1, 'same', activation=tf.nn.elu, name='conv2d_enc_%d_3'%i)
-        layer = tf.concat([layer3, layer5, layer7], -1, name="conv2d_enc_%d"%i)
-    layer = tf.layers.flatten(layer, name='flatten_enc')
+        layer = tf.layers.conv2d(layer, size, 5, i%2+1, 'same', activation=tf.nn.elu, name='conv2d_enc_%d'%i)
+        if i%2 == 0 and i > 0:
+            sc = tf.layers.conv2d(layer, 4, 5, 2, 'same', activation=tf.nn.elu, name='shortcut_enc_%d_0'%i)
+            sc = tf.layers.flatten(sc)
+            sc = tf.layers.dense(sc, bottleneck, activation=tf.nn.elu, name='shortcut_enc_%d_1'%i)
+            shortcuts.append(sc)
+    layer = tf.layers.flatten(layer)
+    shortcuts.append(tf.layers.dense(layer, bottleneck, activation=tf.nn.elu))
+    layer = tf.concat(shortcuts, -1)
     layer = tf.layers.dense(layer, bottleneck, name='dense_enc')
     return layer
 
 def _decoder(code, width=IMAGE_WIDTH, height=IMAGE_HEIGHT, layers=5):
     w = width // (1<<layers)
     h = height // (1<<layers)
-    size = 32
+    size = 48
     layer = tf.layers.dense(code, w*h*size, name='dense_dec')
     layer = tf.reshape(layer, (-1, h, w, size))
     first_layer = layer
     for i in range(layers*2+2):
-        layer7 = tf.layers.conv2d(layer, size//2, 7, 1, 'same', activation=tf.nn.elu, name='conv2d_dec_%d_7'%i)
-        layer5 = tf.layers.conv2d(layer, size//2, 5, 1, 'same', activation=tf.nn.elu, name='conv2d_dec_%d_5'%i)
-        layer3 = tf.layers.conv2d(layer, size, 3, 1, 'same', activation=tf.nn.elu, name='conv2d_dec_%d_3'%i)
-        layer = tf.concat([layer3, layer5, layer7], -1, name="conv2d_dec_%d"%i)
-        if i == layers*2 +1:
+        layer = tf.layers.conv2d(layer, size, 5, 1, 'same', activation=tf.nn.elu, name='conv2d_dec_%d'%i)
+        if i == layers*2 + 1:
             layer = tf.layers.conv2d(layer, 3, 3, 1, 'same', name='conv2d_dec_final')
         elif i%2 == 1:
-            w *= 2
-            h *= 2
-            layer = tf.concat([
-                tf.image.resize_nearest_neighbor(layer, (h, w), name='resize_dec_%d_0'%(i//2)),
-                tf.image.resize_nearest_neighbor(first_layer, (h, w), name='resize_dec_%d_1'%(i//2))
+            dbl = 1<<(i//2+1)
+            layer = tf.concat([ #upscale and add shortcut
+                tf.layers.conv2d_transpose(layer, size, 3, 2, 'same', name='resize_dec_%d'%(i//2)),
+                tf.layers.conv2d_transpose(first_layer, size//2, dbl+1, dbl, 'same', name='shortcut_dec_%d'%(i//2))
             ], -1, name='resize_dec_%d_concat'%i)
     return layer
 
@@ -82,7 +83,7 @@ def generator(input_size=CODE_SIZE, batch_size=BATCH_SIZE, image_height=IMAGE_HE
         #Generate random input
         prev_layer = tf.random_uniform((batch_size, input_size), -1.0, 1.0)
         #generator == decoder
-        prev_layer = _decoder(prev_layer, image_width, image_height, 4)
+        prev_layer = _decoder(prev_layer, image_width, image_height, 5)
         return prev_layer
 
 def discriminator(image, code_size=CODE_SIZE, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH):
@@ -91,8 +92,8 @@ def discriminator(image, code_size=CODE_SIZE, image_height=IMAGE_HEIGHT, image_w
     """
     with tf.variable_scope('discriminator'):
         #autoencoder
-        prev_layer = _encoder(image, 4, code_size)
-        prev_layer = _decoder(prev_layer, image_width, image_height, 4)
+        prev_layer = _encoder(image, 5, code_size)
+        prev_layer = _decoder(prev_layer, image_width, image_height, 5)
         return prev_layer
 
 

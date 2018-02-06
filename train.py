@@ -22,28 +22,33 @@ def train():
     writer = tf.summary.FileWriter(DIRECTORY)
     saver = tf.train.Saver()
     global_step = tf.train.get_or_create_global_step()
-    config = tf.ConfigProto()
-    config.gpu_options.allow_growth = True #pylint: disable=E1101
-    with tf.Session(config=config) as sess:
-    #with tf.Session() as sess:
+    #config = tf.ConfigProto()
+    #config.gpu_options.allow_growth = True #pylint: disable=E1101
+    #with tf.Session(config=config) as sess:
+    with tf.Session() as sess:
         try:
             saver.restore(sess, tf.train.latest_checkpoint(DIRECTORY))
         except:
             sess.run(tf.global_variables_initializer())
         print("Starting the training")
-        for i in range(1000):
-            _, smry, step = sess.run([train_op, summary, global_step])
-            writer.add_summary(smry, step)
-            if step == 1:
-                writer.add_graph(sess.graph, step)
-            if i%10 == 5:
-                saver.save(sess, os.path.join(DIRECTORY, 'model'), step)
-            new_time = timer()
-            print('%000d:\t%.2fs'%(step, new_time-old_time))
-            old_time = new_time
-            for _ in range(99):
-                sess.run(train_op)
-        saver.save(sess, os.path.join(DIRECTORY, 'model'), step)
+        try:
+            for i in range(1000):
+                _, smry, step = sess.run([train_op, summary, global_step])
+                writer.add_summary(smry, step)
+                if step == 1:
+                    writer.add_graph(sess.graph, step)
+                if i%10 == 5:
+                    saver.save(sess, os.path.join(DIRECTORY, 'model'), step)
+                new_time = timer()
+                print('%6d:  \t%.2fs'%(step, new_time-old_time))
+                old_time = new_time
+                for _ in range(99):
+                    sess.run(train_op)
+            step = sess.run(global_step)
+            saver.save(sess, os.path.join(DIRECTORY, 'model'), step)
+        except KeyboardInterrupt:
+            step = sess.run(global_step)
+            saver.save(sess, os.path.join(DIRECTORY, 'model'), step)
 
 
 
