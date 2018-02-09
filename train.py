@@ -4,7 +4,9 @@
 import os
 from timeit import default_timer as timer
 import tensorflow as tf
-from model import get_image_only_data, generator, discriminator, trainer, DIRECTORY, ART_LIST
+from model import ArtGenerator, DIRECTORY
+
+MODEL_PATH = os.path.join(DIRECTORY, 'model')
 
 def train():
     """
@@ -12,12 +14,8 @@ def train():
     """
     old_time = timer()
     new_time = timer()
-    os.makedirs(DIRECTORY, exist_ok=True)
     tf.logging.set_verbosity(tf.logging.DEBUG)
-    ri = get_image_only_data(ART_LIST)
-    fi = generator()
-    rd, fd = tf.split(discriminator(tf.concat([ri, fi], 0)), 2, 0)
-    train_op = trainer(ri, fi, rd, fd)
+    generator = ArtGenerator()
     summary = tf.summary.merge_all()
     writer = tf.summary.FileWriter(DIRECTORY)
     saver = tf.train.Saver()
@@ -32,23 +30,23 @@ def train():
             sess.run(tf.global_variables_initializer())
         print("Starting the training")
         try:
+            #sess.run(generator.learning_rate.assign(4e-5))
             for i in range(1000):
-                _, smry, step = sess.run([train_op, summary, global_step])
+                step, result, smry = generator.train_step(sess, summary)
                 writer.add_summary(smry, step)
                 if step == 1:
                     writer.add_graph(sess.graph, step)
                 if i%10 == 5:
-                    saver.save(sess, os.path.join(DIRECTORY, 'model'), step)
+                    saver.save(sess, MODEL_PATH, step)
                 new_time = timer()
-                print('%6d:  \t%.2fs'%(step, new_time-old_time))
+                print('%6d:  \t%.2fs  \t%.2f'%(step, new_time-old_time, result))
                 old_time = new_time
                 for _ in range(99):
-                    sess.run(train_op)
-            step = sess.run(global_step)
-            saver.save(sess, os.path.join(DIRECTORY, 'model'), step)
+                    generator.train_step(sess)
+            saver.save(sess, MODEL_PATH, global_step.eval(sess))
         except KeyboardInterrupt:
-            step = sess.run(global_step)
-            saver.save(sess, os.path.join(DIRECTORY, 'model'), step)
+            print("Stopping the training")
+            saver.save(sess, MODEL_PATH, global_step.eval(sess))
 
 
 
