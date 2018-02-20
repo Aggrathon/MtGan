@@ -5,16 +5,17 @@ import os
 from pathlib import Path
 import tensorflow as tf
 import numpy as np
+from operators import conv2d_upscale, conv2d_downscale
 
 DIRECTORY = 'network'
 IMAGE_LIST = Path('data') / 'images.txt'
 ART_LIST = Path('data') / 'art.txt'
 IMAGE_WIDTH = 176
 IMAGE_HEIGHT = 128
-BATCH_SIZE = 32
-CODE_SIZE = 400
+BATCH_SIZE = 64
+CODE_SIZE = 100
 LAYERS = 4
-LEARNING_RATE = 1e-5
+LEARNING_RATE = 1e-4
 
 def _read_image(filename):
     string = tf.read_file(filename)
@@ -34,6 +35,17 @@ def get_image_only_data(list_file=IMAGE_LIST, batch_size=BATCH_SIZE):
     images = shuffled.map(_read_image, 8)
     batch = images.batch(batch_size).make_one_shot_iterator().get_next()
     return tf.reshape(batch, (batch_size, IMAGE_HEIGHT, IMAGE_WIDTH, 3))
+
+
+class Generator():
+    def __init__(self, name):
+        self.name = name
+    def train_step(self, session, summary=None):
+        """
+            Do a training step and return step_nr and result (and optionally summary to write)
+        """
+        pass
+
 
 #region BEGAN
 
@@ -130,108 +142,6 @@ def began_trainer(real_image, fake_image, real_result, fake_result, learning_rat
         tf.summary.image("FakeReconstruct", fake_result, 1)
         return tf.group(k, train_op_d, train_op_g), measure
 
-#endregion BEGAN
-
-
-#region WGAN-GP
-
-def wgangp_generator(input_size=CODE_SIZE, batch_size=BATCH_SIZE, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH, layers=LAYERS):
-    """
-        The generator neural network for the WGAN-GP architechture
-    """
-    with tf.variable_scope('generator') as scope:
-        #Generate random input
-        first_layer = tf.random_uniform((batch_size, input_size), -1.0, 1.0)
-        image_width = image_width // (1<<layers)
-        image_height = image_height // (1<<layers)
-        sizes = [256, 128, 64, 32, 16]
-        layer = tf.layers.dense(first_layer, image_height*image_width*sizes[1], name='dense')
-        layer = tf.reshape(layer, (batch_size, image_height, image_width, sizes[1]))
-        for i in range(layers+1):
-            if i <= layers//2:
-                layer = tf.layers.batch_normalization(layer, name='batch_norm_%d'%i)
-            layer = tf.layers.conv2d(layer, sizes[i], 3, 1, 'same', activation=tf.nn.elu, name='conv2d_%d'%i)
-            if i == layers:
-                layer = tf.layers.conv2d(layer, 3, 3, 1, 'same', activation=tf.nn.tanh, name='conv2d_final')
-            else:
-                image_width *= 2
-                image_height *= 2
-                shortcut = tf.layers.dense(first_layer, image_height*image_width*sizes[i+1], name='shortcut_%d'%i)
-                shortcut = tf.reshape(shortcut, (batch_size, image_height, image_width, sizes[i+1]))
-                layer = tf.concat([ #upscale and add shortcut
-                    tf.layers.conv2d_transpose(layer, sizes[i], 3, 2, 'same', name='resize_%d'%i),
-                    shortcut
-                ], -1, name='resize_concat_%d'%i)
-        return layer, scope.trainable_variables()
-
-def wgangp_discriminator(images, layers=LAYERS):
-    """
-        The discriminator neural network for the WPGAN-GP architechture
-    """
-    with tf.variable_scope('discriminator', reuse=tf.AUTO_REUSE) as scope:
-        layer = images
-        sizes = [32, 64, 128, 256]
-        outputs = []
-        for layer in images:
-            shortcuts = []
-            for i in range(layers):
-                if i <= layers//2:
-                    with tf.variable_scope('layer_norm_%d'%i, reuse=tf.AUTO_REUSE) as s:
-                        layer = tf.contrib.layers.layer_norm(layer, scope=s)
-                layer = tf.layers.conv2d(layer, sizes[i], 3, 1, 'same', activation=tf.nn.elu, name='conv2d_%d'%i)
-                layer = tf.layers.conv2d(layer, sizes[i], 3, 2, 'same', activation=tf.nn.elu, name='resize_%d'%i)
-                sc = tf.layers.conv2d(layer, 4, 3, 1, 'same', activation=tf.nn.elu, name='shortcut_%d_0'%i)
-                sc = tf.layers.flatten(sc)
-                sc = tf.layers.dense(sc, 64, activation=tf.nn.elu, name='shortcut_%d_1'%i)
-                shortcuts.append(sc)
-            layer = tf.concat(shortcuts, -1)
-            layer = tf.layers.dense(layer, 128, activation=tf.nn.elu, name='dense_0')
-            layer = tf.layers.dense(layer, 32, activation=tf.nn.elu, name='dense_1')
-            layer = tf.layers.dense(layer, 1, name='logits')
-            outputs.append(layer)
-            scope.reuse_variables()
-        return outputs, scope.trainable_variables()
-
-def wgangp_trainer(real_g, fake_g, hat_g, real_d, fake_d, hat_d, vars_g, vars_d, learning_rate=LEARNING_RATE):
-    """
-        The trainer for the WGAN-GP
-    """
-    global_step = tf.train.get_or_create_global_step()
-    with tf.variable_scope('trainer'):
-        #Losses
-        L_G = -tf.reduce_mean(fake_d)*0.5
-        slope = tf.sqrt(tf.reduce_sum(tf.square(tf.gradients(hat_d, hat_g, colocate_gradients_with_ops=True)[0]), -1))
-        gradient_penalty = tf.reduce_mean(tf.square(slope-1.0))
-        L_D = tf.reduce_mean(fake_d) - tf.reduce_mean(real_d) + 10*gradient_penalty
-        #Trainers
-        trainer_d = tf.train.AdamOptimizer(learning_rate, 0.5, 0.9, name='AdamD')
-        trainer_g = tf.train.AdamOptimizer(learning_rate, 0.5, 0.9, name='AdamG')
-        op_d = trainer_d.minimize(L_D, global_step, vars_d, name='trainD', colocate_gradients_with_ops=True)
-        op_g = trainer_g.minimize(L_G, None, vars_g, name='trainG', colocate_gradients_with_ops=True)
-        train_op = tf.group(op_d, op_g)
-        #summary
-        measure = tf.get_variable('measure', [], tf.float32, trainable=False)
-        measure = tf.assign(measure, 0.9*measure-0.1*L_D)
-        tf.summary.scalar("Measure", measure)
-        tf.summary.scalar("GradientPenalty", gradient_penalty)
-        tf.summary.scalar("LossD", L_D)
-        tf.summary.scalar("LossG", L_G)
-        tf.summary.image("Generated", fake_g, 4)
-        return tf.group(op_d, op_g, measure), measure
-
-
-#endregion WGAN-GP
-
-
-class Generator():
-    def __init__(self, name):
-        self.name = name
-    def train_step(self, session, summary=None):
-        """
-            Do a training step and return step_nr and result (and optionally summary to write)
-        """
-        pass
-
 
 class ArtGeneratorBEGAN(Generator):
     def __init__(self):
@@ -239,10 +149,10 @@ class ArtGeneratorBEGAN(Generator):
         with tf.variable_scope(self.name):
             os.makedirs(DIRECTORY, exist_ok=True)
             with tf.device('/cpu:0'):
-                    self.learning_rate = tf.Variable(LEARNING_RATE, False, dtype=tf.float32, name='learning_rate')
-                    self.best_step = tf.Variable(0, False, dtype=tf.int32, name='best_step')
-                    self.best_result = tf.Variable(999.0, False, dtype=tf.float32, name='best_result')
-                    tf.summary.scalar("LearningRate", self.learning_rate)
+                self.learning_rate = tf.Variable(LEARNING_RATE, False, dtype=tf.float32, name='learning_rate')
+                self.best_step = tf.Variable(0, False, dtype=tf.int32, name='best_step')
+                self.best_result = tf.Variable(999.0, False, dtype=tf.float32, name='best_result')
+                tf.summary.scalar("LearningRate", self.learning_rate)
             self.global_step = tf.train.get_or_create_global_step()
             self.real_image = get_image_only_data(ART_LIST)
             self.fake_image = began_generator()
@@ -266,31 +176,95 @@ class ArtGeneratorBEGAN(Generator):
             session.run([self.learning_rate.assign(lr), self.best_result.assign(res), self.best_step.assign(step)])
         if summary is not None:
             return step, res, smry
-        else:
-            return step, res
+        return step, res
+
+#endregion BEGAN
+
 
 class ArtGeneratorWGANGP(Generator):
-    def __init__(self):
+    """
+        Neural network for generating art based on the WGAN-GP architechture
+    """
+
+    @classmethod
+    def _generator(cls, input_data, training=True, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH):
+        """
+            The generator neural network for the WGAN-GP architechture
+        """
+        with tf.variable_scope('generator') as scope:
+            width = image_width // (1<<4)
+            height = image_height // (1<<4)
+            layer = tf.layers.dense(input_data, height*width*256, activation=tf.nn.elu, name='dense')
+            layer = tf.reshape(layer, (-1, height, width, 256))
+            first_layer = layer
+            layer = conv2d_upscale(layer, 256, training, None, 'layer_0')
+            layer = conv2d_upscale(layer, 192, training, first_layer, 'layer_1')
+            layer = conv2d_upscale(layer, 128, training, None, 'layer_2')
+            layer = conv2d_upscale(layer, 64, training, first_layer, 'layer_3')
+            layer = tf.layers.conv2d(layer, 3, 5, 1, 'same', activation=tf.nn.tanh, name='conv2d_final')
+            return layer, scope.trainable_variables()
+
+    @classmethod
+    def _discriminator(cls, images, reuse, training=True):
+        """
+            The discriminator neural network for the WPGAN-GP architechture
+        """
+        with tf.variable_scope('discriminator', reuse=reuse) as scope:
+            layer0 = conv2d_downscale(images, 64, None, 'layer_0')
+            layer1 = conv2d_downscale(layer0, 96, None, 'layer_1')
+            layer2 = conv2d_downscale(layer1, 128, layer0, 'layer_2')
+            layer3 = conv2d_downscale(layer2, 160, layer1, 'layer_3')
+            #layer dense
+            layer = tf.layers.flatten(layer3)
+            layer = tf.layers.dense(layer, 128, activation=tf.nn.elu, name='dense')
+            layer = tf.layers.dropout(layer, 0.3, training=training)
+            layer = tf.layers.dense(layer, 1, name='logits')
+            if reuse:
+                return layer
+            return layer, scope.trainable_variables()
+
+    def __init__(self, training=True, batch_size=BATCH_SIZE, learning_rate=LEARNING_RATE, input_size=CODE_SIZE):
         super().__init__('wgan-gp')
         self.global_step = tf.train.get_or_create_global_step()
         with tf.variable_scope(self.name):
             os.makedirs(DIRECTORY, exist_ok=True)
+            #generator and critic
+            self.seed = tf.random_uniform((batch_size, input_size), -1.0, 1.0)
             self.real_image = get_image_only_data(ART_LIST)
-            self.fake_image, self.generator_variables = wgangp_generator()
-            epsilon = tf.random_uniform([BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
-            self.hat_image = epsilon*self.real_image + (1.0-epsilon)*self.real_image
-            imgs = [self.real_image, self.fake_image, self.hat_image]
-            discs, self.discriminator_variables = wgangp_discriminator(imgs)
-            self.real_disc, self.fake_disc, self.hat_disc = discs
-            self.trainer, self.measure = wgangp_trainer( \
-                self.real_image, self.fake_image, self.hat_image, \
-                self.real_disc, self.fake_disc, self.hat_disc, \
-                self.generator_variables, self.discriminator_variables)
+            self.fake_image, self.generator_variables = ArtGeneratorWGANGP._generator(self.seed, training)
+            self.real_disc, self.discriminator_variables = ArtGeneratorWGANGP._discriminator(self.real_image, False, training)
+            self.fake_disc = ArtGeneratorWGANGP._discriminator(self.fake_image, True, training)
+            #gradient penalty
+            x_hat = self.real_image + tf.random_uniform([batch_size, 1, 1, 1], 0.0, 1.0) * (self.fake_image - self.real_image)
+            y_hat = ArtGeneratorWGANGP._discriminator(x_hat, True, False)
+            gradients = tf.gradients(y_hat, x_hat)
+            slope = tf.sqrt(tf.reduce_sum(tf.square(gradients), [1, 2, 3]))
+            self.gradient_penalty = tf.reduce_mean(tf.square(slope-1.0), name='gradient_penalty')
+            #losses
+            self.loss_g = -tf.reduce_mean(self.fake_disc, name='loss_g')
+            wasserstein_distance = tf.reduce_mean(self.fake_disc) - tf.reduce_mean(self.real_disc)
+            self.loss_d = tf.add(wasserstein_distance, 10.0*self.gradient_penalty, name='loss_d')
+            adam_d = tf.train.AdamOptimizer(learning_rate, 0.1, 0.9, name='AdamD')
+            adam_g = tf.train.AdamOptimizer(learning_rate, 0.1, 0.9, name='AdamG')
+            with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
+                trainer_d = adam_d.minimize(self.loss_d, var_list=self.discriminator_variables, name='train_d')
+                self.trainer_g = adam_g.minimize(self.loss_d, global_step=self.global_step,
+                                                 var_list=self.generator_variables, name='train_g')
+            #summary
+            self.measure = tf.get_variable('measure', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
+            measure = tf.assign(self.measure, 0.95*self.measure-0.05*self.loss_d)
+            tf.summary.scalar("Measure", measure)
+            tf.summary.scalar("GradientPenalty", self.gradient_penalty)
+            tf.summary.scalar("LossD", self.loss_d)
+            tf.summary.scalar("LossG", self.loss_g)
+            tf.summary.image("Generated", self.fake_image, 4)
+            self.trainer_d = tf.group([trainer_d, measure])
 
     def train_step(self, session, summary=None):
+        for _ in range(10):
+            session.run(self.trainer_d)
         if summary is not None:
-            _, smry, step, res = session.run([self.trainer, summary, self.global_step, self.measure])
+            _, smry, step, res = session.run([self.trainer_g, summary, self.global_step, self.measure])
             return step, res, smry
-        else:
-            _, step, res = session.run([self.trainer, self.global_step, self.measure])
-            return step, res
+        _, step, res = session.run([self.trainer_g, self.global_step, self.measure])
+        return step, res
