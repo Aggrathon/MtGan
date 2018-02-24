@@ -28,3 +28,4 @@ These sources have provided inspiration and information during this project:
 - https://blog.heuritech.com/2017/04/11/began-state-of-the-art-generation-of-faces-with-generative-adversarial-networks/
 - BEGAN: https://arxiv.org/abs/1703.10717
 - WGAN-GP: https://arxiv.org/abs/1704.00028
+- PG-GAN: https://arxiv.org/abs/1710.10196
