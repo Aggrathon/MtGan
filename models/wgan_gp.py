@@ -108,7 +108,7 @@ class ArtGeneratorWGANGP(Generator):
             adam_g = tf.train.AdamOptimizer(learning_rate, 0.0, 0.9, name='AdamG')
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                 trainer_d = adam_d.minimize(self.loss_d, var_list=self.discriminator_variables, name='train_d')
-                self.trainer_g = adam_g.minimize(self.loss_d, global_step=self.global_step,
+                self.trainer_g = adam_g.minimize(self.loss_g, global_step=self.global_step,
                                                  var_list=self.generator_variables, name='train_g')
             #summary
             self.measure = tf.get_variable('measure', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
@@ -129,7 +129,7 @@ class ArtGeneratorWGANGP(Generator):
         for _ in range(2):
             session.run(self.trainer_d)
         if summary:
-            _, smry, step, res = session.run([self.trainer_g, summary, self.global_step, self.measure])
+            _, smry, step, res = session.run([self.trainer_g, self.summary, self.global_step, self.measure])
             self.add_summary(smry, step)
         else:
             _, step, res = session.run([self.trainer_g, self.global_step, self.measure])
