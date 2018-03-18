@@ -102,8 +102,10 @@ class ArtGeneratorWGANGP(Generator):
             self.gradient_penalty = tf.reduce_mean(tf.square(slope-1.0), name='gradient_penalty')
             #losses
             self.loss_g = -tf.reduce_mean(self.fake_disc, name='loss_g')
-            wasserstein_distance = tf.reduce_mean(self.fake_disc) - tf.reduce_mean(self.real_disc)
-            self.loss_d = tf.add(wasserstein_distance, 10.0*self.gradient_penalty, name='loss_d')
+            self.loss_d = tf.losses.compute_weighted_loss(
+                [tf.reduce_mean(self.fake_disc), tf.reduce_mean(self.real_disc), self.gradient_penalty, tf.reduce_mean(tf.square(self.real_disc))],
+                [1.0, -1.0, 10.0, 0.001]
+            )
             adam_d = tf.train.AdamOptimizer(learning_rate, 0.0, 0.9, name='AdamD')
             adam_g = tf.train.AdamOptimizer(learning_rate, 0.0, 0.9, name='AdamG')
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
@@ -126,7 +128,7 @@ class ArtGeneratorWGANGP(Generator):
         """
         if session is None:
             session = self.session
-        for _ in range(2):
+        for _ in range(4):
             session.run(self.trainer_d)
         if summary:
             _, smry, step, res = session.run([self.trainer_g, self.summary, self.global_step, self.measure])

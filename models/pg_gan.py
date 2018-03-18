@@ -6,8 +6,8 @@ import tensorflow as tf
 from models.model import IMAGE_HEIGHT, IMAGE_WIDTH, get_art_only_data, Generator
 
 BATCH_SIZE = 64
-LEARNING_RATE = 1e-4
-ITERATIONS_PER_LOD = 20000
+LEARNING_RATE = 2e-5
+ITERATIONS_PER_LOD = 10000
 
 def _generator_layer(prev_layer, images, filters, lerp, name):
 	with tf.variable_scope(name):
@@ -101,12 +101,12 @@ class PgGanGenerator(Generator):
 				self.gradient_penalties = []
 				for real_img, fake_img, hat_img, real_d, fake_d, hat_d in\
 					zip(self.real_images, self.fake_images, self.hat_images, self.real_discs, self.fake_discs, self.hat_discs):
-					self.losses_d.append(-tf.reduce_mean(fake_d))
+					self.losses_g.append(-tf.reduce_mean(fake_d))
 					gradients = tf.gradients(hat_d, hat_img)
 					slope = tf.sqrt(tf.reduce_sum(tf.square(gradients), [1, 2, 3]))
 					gp = tf.reduce_mean(tf.square(slope-1.0))
 					self.gradient_penalties.append(gp)
-					self.losses_g.append(tf.losses.compute_weighted_loss(
+					self.losses_d.append(tf.losses.compute_weighted_loss(
 						[tf.reduce_mean(fake_d), tf.reduce_mean(real_d), gp, tf.reduce_mean(tf.square(fake_d))],
 						[1.0, -1.0, 10.0, 0.001]
 					))
@@ -148,7 +148,7 @@ class PgGanGenerator(Generator):
 		step = self.global_step.eval(session)
 		lod = min(step // ITERATIONS_PER_LOD, 8)
 		for _ in range(2):
-			session.run(self.trainer_d[lod], dict(self.lerp))
+			session.run(self.trainer_d[lod], {self.lerp: min(1.0, (step%ITERATIONS_PER_LOD)/ITERATIONS_PER_LOD)})
 		if summary:
 			_, _, step, res = session.run([self.trainer_g[lod], self.summaries[lod], self.global_step, self.measure])
 			self.add_summary(session.run(self.summary), step)

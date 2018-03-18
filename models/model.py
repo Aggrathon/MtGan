@@ -36,9 +36,9 @@ def get_image_only_data(list_file=IMAGE_LIST, batch_size=32):
     with tf.device('/cpu:0'):
         textfile = tf.data.TextLineDataset(str(list_file))
         shuffled = textfile.cache().repeat().shuffle(30000)
-    images = shuffled.map(_read_image, 8)
-    batch = images.batch(batch_size).make_one_shot_iterator().get_next()
-    return tf.reshape(batch, (batch_size, IMAGE_HEIGHT, IMAGE_WIDTH, 3))
+        images = shuffled.map(_read_image, 8).prefetch(batch_size*4)
+        batch = images.batch(batch_size).make_one_shot_iterator().get_next()
+        return tf.reshape(batch, (batch_size, IMAGE_HEIGHT, IMAGE_WIDTH, 3))
 
 def get_art_only_data(list_file=ART_LIST, batch_size=32):
     """
@@ -47,9 +47,9 @@ def get_art_only_data(list_file=ART_LIST, batch_size=32):
     with tf.device('/cpu:0'):
         textfile = tf.data.TextLineDataset(str(list_file))
         shuffled = textfile.cache().repeat().shuffle(30000)
-    images = shuffled.map(_read_image_random, 8)
-    batch = images.batch(batch_size).make_one_shot_iterator().get_next()
-    return tf.reshape(batch, (batch_size, IMAGE_HEIGHT, IMAGE_WIDTH, 3))
+        images = shuffled.map(_read_image_random, 8).prefetch(batch_size*4)
+        batch = images.batch(batch_size).make_one_shot_iterator().get_next()
+        return tf.reshape(batch, (batch_size, IMAGE_HEIGHT, IMAGE_WIDTH, 3))
 
 class Generator():
     """
