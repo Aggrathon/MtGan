@@ -6,8 +6,10 @@ from pathlib import Path
 import tensorflow as tf
 
 DIRECTORY = Path('network')
-IMAGE_LIST = Path('data') / 'images.txt'
-ART_LIST = Path('data') / 'art.txt'
+DATA = Path('data')
+IMAGE_LIST = DATA / 'images.txt'
+ART_LIST = DATA / 'art.txt'
+ART_BLACK_LIST = DATA / 'art_black.txt'
 IMAGE_WIDTH = 176
 IMAGE_HEIGHT = 128
 GPU = False
@@ -40,7 +42,7 @@ def get_image_only_data(list_file=IMAGE_LIST, batch_size=32):
         batch = images.batch(batch_size).make_one_shot_iterator().get_next()
         return tf.reshape(batch, (batch_size, IMAGE_HEIGHT, IMAGE_WIDTH, 3))
 
-def get_art_only_data(list_file=ART_LIST, batch_size=32):
+def get_art_only_data(list_file=ART_BLACK_LIST, batch_size=32):
     """
         Returns a dataset containing only art
     """

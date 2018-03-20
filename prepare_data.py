@@ -17,8 +17,16 @@ ART = DIRECTORY / 'art'
 DB_FILE = DIRECTORY / 'all_cards.json'
 SIZE_FILE = DIRECTORY / 'sizes.csv'
 OUT_FILE = DIRECTORY / 'cards.csv'
+
 IMAGE_FILE = DIRECTORY / 'images.txt'
 ART_FILE = DIRECTORY / 'art.txt'
+ART_GREEN_FILE = DIRECTORY / 'art_green.txt'
+ART_RED_FILE = DIRECTORY / 'art_red.txt'
+ART_BLACK_FILE = DIRECTORY / 'art_black.txt'
+ART_BLUE_FILE = DIRECTORY / 'art_blue.txt'
+ART_WHITE_FILE = DIRECTORY / 'art_white.txt'
+ART_NOCOLOR_FILE = DIRECTORY / 'art_nocolor.txt'
+
 
 def download_db(overwrite=False):
     """
@@ -181,9 +189,45 @@ def crop_art(overwrite=False):
                 img.crop((23, 40, 199, 168)).convert("RGB").save(art_path, quality=95)
     print()
 
+def split_colors(overwrite=False):
+    colors = [
+        ('Green', ART_GREEN_FILE, []),
+        ('Red', ART_RED_FILE, []),
+        ('Black', ART_BLACK_FILE, []),
+        ('Blue', ART_BLUE_FILE, []),
+        ('White', ART_WHITE_FILE, []),
+        ('[]', ART_NOCOLOR_FILE, []),
+    ]
+    if not overwrite:
+        end = True
+        for _, f, _ in colors:
+            if not os.path.isfile(f):
+                end = False
+                break
+        if end:
+            return
+    print("Creating lists of color specific cards")
+    db = pd.read_csv(str(OUT_FILE), encoding='utf-8')
+    for _, line in db.iterrows():
+        color = line['colors']
+        art = line['art']
+        if type(color) is str:
+            for label, _, array in colors:
+                if label in color:
+                    array.append(art)
+        else:
+            colors[-1][2].append(art)
+    for _, paht, array in colors:
+        if overwrite and os.path.exists(paht):
+            os.remove(paht)
+        if not os.path.exists(paht):
+            with open(paht, 'w') as f:
+                f.write('\n'.join(array))
+
+
 #TODO: Transform into TfRecords?
 
- 
+
 if __name__ == "__main__":
     download_db()
     download_images()
@@ -191,3 +235,4 @@ if __name__ == "__main__":
     #plot_image_dimensions()
     cull_cards()
     crop_art()
+    split_colors()

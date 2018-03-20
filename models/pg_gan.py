@@ -147,7 +147,7 @@ class PgGanGenerator(Generator):
 			session = self.session
 		step = self.global_step.eval(session)
 		lod = min(step // ITERATIONS_PER_LOD, 8)
-		for _ in range(2):
+		for _ in range(5):
 			session.run(self.trainer_d[lod], {self.lerp: min(1.0, (step%ITERATIONS_PER_LOD)/ITERATIONS_PER_LOD)})
 		if summary:
 			_, _, step, res = session.run([self.trainer_g[lod], self.summaries[lod], self.global_step, self.measure])

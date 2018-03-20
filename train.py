@@ -19,7 +19,7 @@ def train():
         print("Starting the training")
         for i in range(1000):
             step, result = generator.train_step(summary=True)
-            if i%100 == 50:
+            if i%10 == 5:
                 generator.save()
                 print('\t'*6+'saved', end='\r')
             new_time = timer()
