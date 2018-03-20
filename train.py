@@ -5,7 +5,8 @@ import math
 from timeit import default_timer as timer
 import tensorflow as tf
 #from models.wgan_gp import ArtGeneratorWGANGP as Generator
-from models.pg_gan import PgGanGenerator as Generator
+#from models.pg_gan import PgGanGenerator as Generator
+from models.skip_gan import SkipGanGenerator as Generator
 
 
 def train():
