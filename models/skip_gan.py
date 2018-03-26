@@ -4,11 +4,11 @@
 """
 
 import tensorflow as tf
-from models.model import IMAGE_HEIGHT, IMAGE_WIDTH, get_art_only_data, Generator
+from models.model import get_art_only_data, Generator
 
 BATCH_SIZE = 32
 CODE_SIZE = 400
-LEARNING_RATE = 2e-5
+LEARNING_RATE = 5e-6
 
 def _generator(data, reuse=False, training=True):
     with tf.variable_scope('generator', reuse=reuse) as scope:
