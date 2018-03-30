@@ -6,9 +6,8 @@
 import tensorflow as tf
 from models.model import get_art_only_data, Generator
 
-BATCH_SIZE = 32
+BATCH_SIZE = 16
 CODE_SIZE = 400
-LEARNING_RATE = 5e-6
 
 def _generator(data, reuse=False, training=True):
     with tf.variable_scope('generator', reuse=reuse) as scope:
@@ -32,15 +31,13 @@ def _generator(data, reuse=False, training=True):
             prev_layer = tf.layers.conv2d_transpose(prev_layer, 256, 3, 2, 'same', activation=tf.nn.relu)
             prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
         with tf.variable_scope('layer4'):
-            prev_layer = tf.layers.conv2d(prev_layer, 128, 3, 1, 'same', activation=tf.nn.relu)
+            prev_layer = tf.layers.conv2d(prev_layer, 256, 3, 1, 'same', activation=tf.nn.relu)
             skip = tf.reshape(tf.layers.dense(data, 66*90, activation=tf.nn.relu), (BATCH_SIZE, 66, 90, 1))
-            prev_layer = prev_layer + tf.layers.conv2d(skip, 128, 3, 1, 'valid')
-            prev_layer = tf.layers.conv2d_transpose(prev_layer, 128, 3, 2, 'same', activation=tf.nn.relu)
+            prev_layer = prev_layer + tf.layers.conv2d(skip, 256, 3, 1, 'valid')
+            prev_layer = tf.layers.conv2d_transpose(prev_layer, 256, 3, 2, 'same', activation=tf.nn.relu)
             prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
         with tf.variable_scope('layer5'):
             prev_layer = tf.layers.conv2d(prev_layer, 64, 3, 1, 'same', activation=tf.nn.relu)
-            skip = tf.reshape(tf.layers.dense(data, 130*178, activation=tf.nn.relu), (BATCH_SIZE, 130, 178, 1))
-            prev_layer = prev_layer + tf.layers.conv2d(skip, 64, 3, 1, 'valid')
             prev_layer = tf.layers.conv2d(prev_layer, 3, 5, 1, 'same', activation=tf.nn.tanh)
         if reuse:
             return prev_layer
@@ -65,13 +62,13 @@ def _discriminator(data, reuse=False, training=True):
         with tf.variable_scope('layer2'):
             prev_layer = tf.layers.conv2d(prev_layer, 128, 3, 1, 'same', activation=tf.nn.relu)
             prev_layer = tf.layers.conv2d(prev_layer, 128, 3, 2, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.conv2d(skip1, 128, 3, 2, 'same')
+            prev_layer = tf.layers.conv2d(skip1, 128, 5, 4, 'same') + prev_layer
             with tf.variable_scope('layer_norm', reuse=tf.AUTO_REUSE) as norm_scope:
                 prev_layer = tf.contrib.layers.layer_norm(prev_layer, begin_norm_axis=1, begin_params_axis=1, scope=norm_scope)
         with tf.variable_scope('layer3'):
             prev_layer = tf.layers.conv2d(prev_layer, 256, 3, 1, 'same', activation=tf.nn.relu)
             prev_layer = tf.layers.conv2d(prev_layer, 256, 3, 2, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.conv2d(skip2, 128, 3, 2, 'same')
+            prev_layer = tf.layers.conv2d(skip2, 256, 5, 4, 'same') + prev_layer
             with tf.variable_scope('layer_norm', reuse=tf.AUTO_REUSE) as norm_scope:
                 prev_layer = tf.contrib.layers.layer_norm(prev_layer, begin_norm_axis=1, begin_params_axis=1, scope=norm_scope)
             prev_layer = tf.layers.conv2d(prev_layer, 128, 3, 1, 'same', activation=tf.nn.relu)
@@ -109,15 +106,18 @@ class SkipGanGenerator(Generator):
             rmf = tf.reduce_mean(self.fake_disc)
             rmr = tf.reduce_mean(self.real_disc)
             diff = tf.maximum(0.0, rmr - rmf)
-            self.loss_g = tf.negative(rmf, name='loss_g')
-            self.loss_d = tf.losses.compute_weighted_loss( [rmf, rmr, self.gradient_penalty], [1.0, -1.0, 10.0])
+            self.loss_g = tf.losses.compute_weighted_loss(rmf, -0.5)
+            self.loss_d = tf.losses.compute_weighted_loss([rmf, rmr, self.gradient_penalty], [1.0, -1.0, 10.0])
             #meta
             self.distance = tf.get_variable('distance', [], tf.float32, trainable=False, initializer=tf.initializers.ones)
             self.measure = tf.get_variable('measure', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
             measure = tf.assign(self.measure, 0.95*self.measure-0.05*self.loss_d)
             distance = tf.assign(self.distance, 0.95*self.distance + 0.05*diff)
             #training
-            adam = tf.train.AdamOptimizer(LEARNING_RATE, 0.0, 0.9, name='Adam')
+            learning_rate = tf.maximum(0.0, 1.0 - tf.to_float(self.global_step)*2e-5)
+            learning_rate = learning_rate*learning_rate*learning_rate*learning_rate
+            learning_rate = learning_rate*1e-4 + 1e-7
+            adam = tf.train.AdamOptimizer(learning_rate, 0.0, 0.9, name='Adam')
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                 self.trainer_d = adam.minimize(
                     self.loss_d,
