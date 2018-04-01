@@ -38,7 +38,7 @@ def _generator(data, reuse=False, training=True):
             prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
         with tf.variable_scope('layer5'):
             prev_layer = tf.layers.conv2d(prev_layer, 64, 3, 1, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.conv2d(prev_layer, 3, 5, 1, 'same', activation=tf.nn.tanh)
+            prev_layer = tf.layers.conv2d(prev_layer, 3, 5, 1, 'same')
         if reuse:
             return prev_layer
         else:
@@ -74,9 +74,6 @@ def _discriminator(data, reuse=False, training=True):
             prev_layer = tf.layers.conv2d(prev_layer, 128, 3, 1, 'same', activation=tf.nn.relu)
         with tf.variable_scope('layer4'):
             prev_layer = tf.layers.flatten(prev_layer)
-            prev_layer = tf.layers.dropout(prev_layer, 0.3, training=training)
-            prev_layer = tf.layers.dense(prev_layer, 256, activation=tf.nn.relu)
-            prev_layer = tf.layers.dropout(prev_layer, 0.3, training=training)
             prev_layer = tf.layers.dense(prev_layer, 1, name='logits')
         if reuse:
             return prev_layer
@@ -114,9 +111,9 @@ class SkipGanGenerator(Generator):
             measure = tf.assign(self.measure, 0.95*self.measure-0.05*self.loss_d)
             distance = tf.assign(self.distance, 0.95*self.distance + 0.05*diff)
             #training
-            learning_rate = tf.maximum(0.0, 1.0 - tf.to_float(self.global_step)*2e-5)
+            learning_rate = tf.maximum(0.0, 1.0 - tf.to_float(self.global_step)*3e-5)
             learning_rate = learning_rate*learning_rate*learning_rate*learning_rate
-            learning_rate = learning_rate*1e-4 + 1e-7
+            learning_rate = learning_rate*5e-5 + 2e-8
             adam = tf.train.AdamOptimizer(learning_rate, 0.0, 0.9, name='Adam')
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
                 self.trainer_d = adam.minimize(
