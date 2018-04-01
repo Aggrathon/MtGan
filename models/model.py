@@ -11,6 +11,7 @@ IMAGE_LIST = DATA / 'images.txt'
 ART_LIST = DATA / 'art.txt'
 ART_BLACK_LIST = DATA / 'art_black.txt'
 ART_GREEN_LIST = DATA / 'art_green.txt'
+ART_WHITE_LIST = DATA / 'art_white.txt'
 IMAGE_WIDTH = 176
 IMAGE_HEIGHT = 128
 GPU = False
@@ -32,27 +33,32 @@ def _read_image_random(filename):
     random = tf.image.random_hue(random, 0.05)
     return random
 
-def get_image_only_data(list_file=IMAGE_LIST, batch_size=32):
+def _read_image_random_crop(filename):
+    return tf.random_crop(_read_image_random(filename), (8*16, 10*16, 3))
+
+def get_image_only_data(list_file=IMAGE_LIST, batch_size=32, image_processor=_read_image, image_height=IMAGE_HEIGHT, image_width=IMAGE_WIDTH):
     """
         Returns a dataset containing only images
     """
     with tf.device('/cpu:0'):
         textfile = tf.data.TextLineDataset(str(list_file))
         shuffled = textfile.cache().repeat().shuffle(30000)
-        images = shuffled.map(_read_image, 8).prefetch(batch_size*4)
+        images = shuffled.map(image_processor, 8).prefetch(batch_size*4)
         batch = images.batch(batch_size).make_one_shot_iterator().get_next()
-        return tf.reshape(batch, (batch_size, IMAGE_HEIGHT, IMAGE_WIDTH, 3))
+        return tf.reshape(batch, (batch_size, image_height, image_width, 3))
 
-def get_art_only_data(list_file=ART_GREEN_LIST, batch_size=32):
+def get_art_only_data(list_file=ART_LIST, batch_size=32):
     """
         Returns a dataset containing only art
     """
-    with tf.device('/cpu:0'):
-        textfile = tf.data.TextLineDataset(str(list_file))
-        shuffled = textfile.cache().repeat().shuffle(30000)
-        images = shuffled.map(_read_image_random, 8).prefetch(batch_size*4)
-        batch = images.batch(batch_size).make_one_shot_iterator().get_next()
-        return tf.reshape(batch, (batch_size, IMAGE_HEIGHT, IMAGE_WIDTH, 3))
+    return get_image_only_data(list_file, batch_size, _read_image_random)
+
+def get_art_only_cropped(art_list=ART_WHITE_LIST, batch_size=32):
+    """
+        Returns a dataset containing cropped art
+    """
+    return get_image_only_data(art_list, batch_size, _read_image_random_crop, 8*16, 10*16)
+
 
 class Generator():
     """

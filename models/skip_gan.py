@@ -4,75 +4,56 @@
 """
 
 import tensorflow as tf
-from models.model import get_art_only_data, Generator
+from models.model import get_art_only_cropped, Generator
 
 BATCH_SIZE = 16
 CODE_SIZE = 400
 
+def _generator_cell(prev_layer, size, data, height, width, training, name):
+    with tf.variable_scope(name):
+        prev_layer = tf.layers.conv2d(prev_layer, size, 3, 1, 'same', activation=tf.nn.relu)
+        skip = tf.reshape(tf.layers.dense(data, (width+2)*(height+2)*4, activation=tf.nn.relu), (BATCH_SIZE, height+2, width+2, 4))
+        prev_layer = prev_layer + tf.layers.conv2d(skip, size, 3, 1, 'valid')
+        prev_layer = tf.layers.conv2d_transpose(prev_layer, size, 3, 2, 'same', activation=tf.nn.relu)
+        prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
+    return prev_layer
+
+
 def _generator(data, reuse=False, training=True):
     with tf.variable_scope('generator', reuse=reuse) as scope:
-        prev_layer = tf.reshape(tf.layers.dense(data, 8*11*8, activation=tf.nn.relu), (BATCH_SIZE, 8, 11, 8), 'layer0')
-        with tf.variable_scope('layer1'):
-            prev_layer = tf.layers.conv2d(prev_layer, 128, 3, 1, 'same', activation=tf.nn.relu)
-            skip = tf.reshape(tf.layers.dense(data, 10*13, activation=tf.nn.relu), (BATCH_SIZE, 10, 13, 1))
-            prev_layer = prev_layer + tf.layers.conv2d(skip, 128, 3, 1, 'valid')
-            prev_layer = tf.layers.conv2d_transpose(prev_layer, 256, 3, 2, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
-        with tf.variable_scope('layer2'):
-            prev_layer = tf.layers.conv2d(prev_layer, 256, 3, 1, 'same', activation=tf.nn.relu)
-            skip = tf.reshape(tf.layers.dense(data, 18*24, activation=tf.nn.relu), (BATCH_SIZE, 18, 24, 1))
-            prev_layer = prev_layer + tf.layers.conv2d(skip, 256, 3, 1, 'valid')
-            prev_layer = tf.layers.conv2d_transpose(prev_layer, 256, 3, 2, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
-        with tf.variable_scope('layer3'):
-            prev_layer = tf.layers.conv2d(prev_layer, 256, 3, 1, 'same', activation=tf.nn.relu)
-            skip = tf.reshape(tf.layers.dense(data, 34*46, activation=tf.nn.relu), (BATCH_SIZE, 34, 46, 1))
-            prev_layer = prev_layer + tf.layers.conv2d(skip, 256, 3, 1, 'valid')
-            prev_layer = tf.layers.conv2d_transpose(prev_layer, 256, 3, 2, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
-        with tf.variable_scope('layer4'):
-            prev_layer = tf.layers.conv2d(prev_layer, 256, 3, 1, 'same', activation=tf.nn.relu)
-            skip = tf.reshape(tf.layers.dense(data, 66*90, activation=tf.nn.relu), (BATCH_SIZE, 66, 90, 1))
-            prev_layer = prev_layer + tf.layers.conv2d(skip, 256, 3, 1, 'valid')
-            prev_layer = tf.layers.conv2d_transpose(prev_layer, 256, 3, 2, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
-        with tf.variable_scope('layer5'):
-            prev_layer = tf.layers.conv2d(prev_layer, 64, 3, 1, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.conv2d(prev_layer, 3, 5, 1, 'same')
+        prev_layer = tf.reshape(tf.layers.dense(data, 4*5*16, activation=tf.nn.relu), (BATCH_SIZE, 4, 5, 16), 'layer0')
+        prev_layer = _generator_cell(prev_layer, 64, data, 4,   5,   training, 'layer1')
+        prev_layer = _generator_cell(prev_layer, 128, data, 8,   10,  training, 'layer2')
+        prev_layer = _generator_cell(prev_layer, 192, data, 16,  20,  training, 'layer3')
+        prev_layer = _generator_cell(prev_layer, 256, data, 32,  40,  training, 'layer4')
+        prev_layer = _generator_cell(prev_layer, 320, data, 64,  80,  training, 'layer5')
+        with tf.variable_scope('layer6'):
+            prev_layer = tf.layers.conv2d(prev_layer, 128, 5, 1, 'same', activation=tf.nn.relu)
+            prev_layer = tf.layers.conv2d(prev_layer, 3, 5, 1, 'same', activation=tf.nn.tanh)
         if reuse:
             return prev_layer
         else:
             return prev_layer, scope.trainable_variables()
 
+def _discriminator_cell(prev_layer, skip, training, size, name, ):
+    with tf.variable_scope(name):
+        prev_layer = tf.layers.conv2d(prev_layer, size, 3, 1, 'same', activation=tf.nn.relu)
+        if skip is not None:
+            prev_layer = prev_layer + tf.layers.conv2d(skip, size, 3, 2, 'same')
+        prev_layer = tf.layers.conv2d(prev_layer, size, 3, 2, 'same')
+        with tf.variable_scope('layer_norm', reuse=tf.AUTO_REUSE) as norm_scope:
+            prev_layer = tf.contrib.layers.layer_norm(prev_layer, begin_norm_axis=1, begin_params_axis=1, scope=norm_scope)
+        return prev_layer
+
 def _discriminator(data, reuse=False, training=True):
     with tf.variable_scope('discriminator', reuse=reuse) as scope:
-        with tf.variable_scope('layer0'):
-            prev_layer = tf.layers.conv2d(data, 32, 3, 1, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.conv2d(prev_layer, 32, 3, 2, 'same', activation=tf.nn.relu)
-            with tf.variable_scope('layer_norm', reuse=tf.AUTO_REUSE) as norm_scope:
-                prev_layer = tf.contrib.layers.layer_norm(prev_layer, begin_norm_axis=1, begin_params_axis=1, scope=norm_scope)
-            skip1 = prev_layer
-        with tf.variable_scope('layer1'):
-            prev_layer = tf.layers.conv2d(prev_layer, 64, 3, 1, 'same', activation=tf.nn.relu)
-            prev_layer = prev_layer + tf.layers.conv2d(data, 64, 3, 2, 'same')
-            prev_layer = tf.layers.conv2d(prev_layer, 64, 3, 2, 'same')
-            with tf.variable_scope('layer_norm', reuse=tf.AUTO_REUSE) as norm_scope:
-                prev_layer = tf.contrib.layers.layer_norm(prev_layer, begin_norm_axis=1, begin_params_axis=1, scope=norm_scope)
-            skip2 = prev_layer
-        with tf.variable_scope('layer2'):
-            prev_layer = tf.layers.conv2d(prev_layer, 128, 3, 1, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.conv2d(prev_layer, 128, 3, 2, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.conv2d(skip1, 128, 5, 4, 'same') + prev_layer
-            with tf.variable_scope('layer_norm', reuse=tf.AUTO_REUSE) as norm_scope:
-                prev_layer = tf.contrib.layers.layer_norm(prev_layer, begin_norm_axis=1, begin_params_axis=1, scope=norm_scope)
-        with tf.variable_scope('layer3'):
-            prev_layer = tf.layers.conv2d(prev_layer, 256, 3, 1, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.conv2d(prev_layer, 256, 3, 2, 'same', activation=tf.nn.relu)
-            prev_layer = tf.layers.conv2d(skip2, 256, 5, 4, 'same') + prev_layer
-            with tf.variable_scope('layer_norm', reuse=tf.AUTO_REUSE) as norm_scope:
-                prev_layer = tf.contrib.layers.layer_norm(prev_layer, begin_norm_axis=1, begin_params_axis=1, scope=norm_scope)
-            prev_layer = tf.layers.conv2d(prev_layer, 128, 3, 1, 'same', activation=tf.nn.relu)
-        with tf.variable_scope('layer4'):
+        layer0 = _discriminator_cell(data,   None,   training, 64,  'layer0')
+        layer1 = _discriminator_cell(layer0, data,   training, 128, 'layer1')
+        layer2 = _discriminator_cell(layer1, layer0, training, 192, 'layer2')
+        layer3 = _discriminator_cell(layer2, layer1, training, 256, 'layer3')
+        layer4 = _discriminator_cell(layer3, layer2, training, 320, 'layer4')
+        with tf.variable_scope('layer5'):
+            prev_layer = tf.layers.conv2d(layer4, 128, 5, 1, 'same', activation=tf.nn.relu)
             prev_layer = tf.layers.flatten(prev_layer)
             prev_layer = tf.layers.dense(prev_layer, 1, name='logits')
         if reuse:
@@ -89,7 +70,7 @@ class SkipGanGenerator(Generator):
         super().__init__('skip-gan')
         with self.scope:
             self.seed = tf.random_uniform((BATCH_SIZE, CODE_SIZE), -1.0, 1.0)
-            self.real_image = get_art_only_data(batch_size=BATCH_SIZE)
+            self.real_image = get_art_only_cropped(batch_size=BATCH_SIZE)
             self.fake_image, gen_vars = _generator(self.seed, False, training)
             self.real_disc, disc_vars = _discriminator(self.real_image, False, training)
             self.fake_disc = _discriminator(self.fake_image, True, training)
@@ -111,7 +92,7 @@ class SkipGanGenerator(Generator):
             measure = tf.assign(self.measure, 0.95*self.measure-0.05*self.loss_d)
             distance = tf.assign(self.distance, 0.95*self.distance + 0.05*diff)
             #training
-            learning_rate = tf.maximum(0.0, 1.0 - tf.to_float(self.global_step)*3e-5)
+            learning_rate = tf.maximum(0.0, 1.0 - tf.to_float(self.global_step)*5e-5)
             learning_rate = learning_rate*learning_rate*learning_rate*learning_rate
             learning_rate = learning_rate*5e-5 + 2e-8
             adam = tf.train.AdamOptimizer(learning_rate, 0.0, 0.9, name='Adam')
