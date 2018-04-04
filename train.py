@@ -26,7 +26,7 @@ def train():
             new_time = timer()
             print('%6d:  \t%2.2fs  \t%2.2f'%(step, new_time-old_time, result))
             old_time = new_time
-            for _ in range(49):
+            for _ in range(19):
                 step, result = generator.train_step()
                 if math.isnan(result):
                     print('Training Failed (%d)'%step)
