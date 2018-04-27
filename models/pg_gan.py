@@ -3,137 +3,143 @@
 	https://arxiv.org/abs/1710.10196
 """
 import tensorflow as tf
-from models.model import IMAGE_HEIGHT, IMAGE_WIDTH, get_art_only_data, Generator
+from models.model import get_art_only_cropped, Generator, IMAGE_HEIGHT, IMAGE_WIDTH
 
-BATCH_SIZE = 64
-LEARNING_RATE = 2e-5
+BATCH_SIZE = 32
+LEARNING_RATE = 1e-5
 ITERATIONS_PER_LOD = 10000
 
-def _generator_layer(prev_layer, images, filters, lerp, name):
-	with tf.variable_scope(name):
-		out = tf.image.resize_bilinear(images[-1], tf.multiply(tf.shape(prev_layer)[1:3], 2))
-		prev_layer = tf.layers.conv2d_transpose(prev_layer, filters, 3, 2, 'same', activation=tf.nn.leaky_relu, name='Conv0')
-		prev_layer = tf.layers.conv2d(prev_layer, filters, 3, 1, 'same', activation=tf.nn.leaky_relu, name='Conv1')
-		image = tf.layers.conv2d(prev_layer, 3, 3, 1, 'same', name='Output%d'%(len(images)+1))
-		images.append(tf.add(out*(1.0-lerp), image*lerp, name='Output%d'%len(images)))
-		images.append(image)
-		return prev_layer
+GENERATOR_WIDTHS = [512, 512, 384, 256]
+DISCRIMINATOR_WIDTHS = [512, 384, 256, 192, 128]
 
-def _discriminator_layer(image, filters, first, last, prev, lerp, name):
-	with tf.variable_scope(name, reuse=tf.AUTO_REUSE):
-		if first:
-			layer = tf.layers.conv2d(image, filters//2, 1, 1, 'same', activation=tf.nn.leaky_relu, name='ConvInit')
-		elif lerp is not None and prev is not None:
-			layer = tf.image.resize_bilinear(prev, tf.shape(prev)[1:3]//2)
-			layer = tf.layers.conv2d(layer, filters//2, 1, 1, 'same', activation=tf.nn.leaky_relu, name='ConvInit')
-			layer = layer*(1.0-lerp) + image*lerp
+def _lerp(lerp, a, b):
+	return a + (b-a)*lerp
+
+def _generator(data, depth, reuse=False, training=True):
+	if depth > 0:
+		layer, _ = _generator(data, depth-1, True)
+	filters = GENERATOR_WIDTHS[depth]
+	with tf.variable_scope('Generator%d'%depth, reuse=reuse):
+		if depth == 0:
+			layer = tf.layers.conv2d_transpose(data, 256, (8, 11), 1, name='Expand')
+		prev_layer = tf.layers.conv2d_transpose(layer, filters, 3, 2, 'same', activation=tf.nn.leaky_relu, name='Conv0')
+		prev_layer = tf.layers.conv2d(prev_layer, filters*2, 1, 1, 'same', name='Conv1')
+		prev_layer = tf.layers.conv2d(prev_layer, filters, 3, 1, 'same', activation=tf.nn.leaky_relu, name='Conv2')
+		prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
+		image = tf.layers.conv2d(prev_layer, 3, 3, 1, 'same', activation=tf.nn.leaky_relu, name='Output0')
+		image = tf.layers.conv2d(image, 3, 3, 1, 'same', activation=tf.nn.tanh, name='Output1')
+		return prev_layer, image
+
+def _discriminator(image, depth, reuse=False, training=True):
+	filters = DISCRIMINATOR_WIDTHS[depth]
+	with tf.variable_scope('Discriminator%d'%depth, reuse=reuse):
+		if int(image.get_shape()[-1]) == 3:
+			layer = tf.layers.conv2d(image, DISCRIMINATOR_WIDTHS[depth+1], 3, 1, 'same', activation=tf.nn.leaky_relu, name='Input')
 		else:
 			layer = image
 		layer = tf.layers.conv2d(layer, filters, 3, 1, 'same', activation=tf.nn.leaky_relu, name='Conv0')
-		if last:
-			layer = tf.layers.conv2d(layer, filters, 3, 1, 'valid', activation=tf.nn.leaky_relu, name='Conv1')
-			layer = tf.layers.dense(layer, filters, tf.nn.leaky_relu, name='Dense0')
-			layer = tf.layers.dense(layer, 1, name='Dense1')
+		layer = tf.layers.conv2d(layer, filters*2, 1, 1, 'same', name='Conv1')
+		layer = tf.layers.conv2d(layer, filters, 3, 2, 'same', activation=tf.nn.leaky_relu, name='Conv2')
+		if depth == 0:
+			layer = tf.layers.conv2d(layer, 512, 1, 1, 'same', activation=tf.nn.leaky_relu, name='Output0')
+			layer = tf.layers.conv2d(layer, 256, 3, 1, 'valid', activation=tf.nn.leaky_relu, name='Output1')
+			layer = tf.layers.flatten(layer)
+			return tf.layers.dense(layer, 1, name='logits')
 		else:
-			layer = tf.layers.conv2d(layer, filters, 3, 2, 'same', activation=tf.nn.leaky_relu, name='Conv1')
-		return layer
+			with tf.variable_scope('layer_norm', reuse=tf.AUTO_REUSE) as norm_scope:
+				layer = tf.contrib.layers.layer_norm(layer, begin_norm_axis=1, begin_params_axis=1, scope=norm_scope)
+	return _discriminator(layer, depth-1, True, training)
 
-def _discriminator(image, layer=None, prev=None, level=0, lerp=None):
-	if level < 0:
-		return layer
-	size = [512, 256, 128, 64, 32][level]
-	if image is None:
-		layer = _discriminator_layer(layer, size, False, level == 0, prev, lerp, 'Layer%d'%level)
-		return _discriminator(None, layer, None, level-1, lerp)
-	else:
-		layer = _discriminator_layer(image, size, True, level == 0, prev, lerp, 'Layer%d'%level)
-		return _discriminator(None, layer, image, level-1, lerp)
+def _losses(depth, img_g, img_h, disc_g, disc_r, disc_h):
+	with tf.variable_scope("Loss%d"%depth):
+		mean_g = tf.reduce_mean(disc_g)
+		mean_r = tf.reduce_mean(disc_r)
+		losses_g = -mean_g
+		gradients = tf.gradients(disc_h, img_h)
+		slope = tf.sqrt(tf.reduce_sum(tf.square(gradients), [1, 2, 3]))
+		gradient_penalty = tf.reduce_mean(tf.square(slope-1.0))
+		losses_d = tf.losses.compute_weighted_loss( \
+			[mean_g, mean_r, gradient_penalty, tf.reduce_mean(tf.square(disc_g))], \
+			[1.0, -1.0, 10.0, 0.001] \
+		)
+		return img_g, mean_r-mean_g, gradient_penalty, losses_g, losses_d
 
+def _lerp_losses(lerp, loss1, loss2):
+	return (loss2[0], *(_lerp(lerp, a, b) for a, b in zip(loss1[1:], loss2[1:])))
+
+def _get_all_gans(seed, image, lerp, training=True):
+	rnd = tf.random_uniform((BATCH_SIZE, 1, 1, 1), 0.0, 1.0)
+	img_g = _generator(seed, 0, False, training)[1]
+	img_r = tf.image.resize_bilinear(image, (16, 22))
+	img_h = _lerp(rnd, img_r, img_g)
+	disc_g = _discriminator(img_g, 0, False, training)
+	disc_r = _discriminator(img_r, 0, True, training)
+	disc_h = _discriminator(img_h, 0, True, training)
+	old_loss = _losses(0, img_g, img_h, disc_g, disc_r, disc_h)
+	yield old_loss
+	for i in range(1, 4):
+		img_next = _generator(seed, i, False, training)[1]
+		size = (8*(2<<i), 11*(2<<i))
+		img_g = _lerp(lerp, tf.image.resize_nearest_neighbor(img_g, size), img_next)
+		img_r = tf.image.resize_bilinear(image, size)
+		img_h = _lerp(rnd, img_r, img_g)
+		disc_g = _discriminator(img_g, i, False, training)
+		disc_r = _discriminator(img_r, i, True, training)
+		disc_h = _discriminator(img_h, i, True, training)
+		loss = _losses(i, img_g, img_h, disc_g, disc_r, disc_h)
+		yield _lerp_losses(lerp, old_loss, loss)
+		yield loss
+		old_loss = loss
 
 class PgGanGenerator(Generator):
 	"""
         Neural network for generating art based on the PG-GAN architechture
 	"""
 
-	def __init__(self, batch_size=BATCH_SIZE, iterations_per_lod=ITERATIONS_PER_LOD, learning_rate=LEARNING_RATE):
+	def __init__(self, iterations_per_lod=ITERATIONS_PER_LOD, learning_rate=LEARNING_RATE, training=True):
 		super().__init__("pg-gan")
 		with self.scope:
-			self.seed = tf.random_uniform((batch_size, 1, 1, 512))
+			self.seed = tf.random_uniform((BATCH_SIZE, 1, 1, 200))
 			self.lerp = tf.to_float(tf.mod(self.global_step, iterations_per_lod)) / tf.to_float(iterations_per_lod)
-			self.fake_images = []
-			with tf.variable_scope('Generator') as scope:
-				with tf.variable_scope('Layer0'):
-					layer = tf.layers.conv2d_transpose(self.seed, 512, (8, 11), 1, activation=tf.nn.leaky_relu, name='Conv0')
-					layer = tf.layers.conv2d(layer, 512, 3, 1, 'same', activation=tf.nn.leaky_relu, name='Conv1')
-					self.fake_images.append(tf.layers.conv2d(layer, 3, 3, 1, 'same', name='Output%d'%len(self.fake_images)))
-				layer = _generator_layer(layer, self.fake_images, 256, self.lerp, 'Layer1')
-				layer = _generator_layer(layer, self.fake_images, 128, self.lerp, 'Layer2')
-				layer = _generator_layer(layer, self.fake_images, 64, self.lerp, 'Layer3')
-				layer = _generator_layer(layer, self.fake_images, 32, self.lerp, 'Layer4')
-				self.generator_variables = scope.trainable_variables()
-			self.fake_discs = []
-			self.real_discs = []
-			self.hat_discs = []
-			self.real_image = get_art_only_data(batch_size=batch_size)
-			self.real_images = []
-			self.hat_images = []
-			with tf.variable_scope('Discriminator') as scope:
-				for i, image in enumerate(self.fake_images):
-					layers = (i+1)%2
-					mult = 1 << ((i+1)//2)
-					real_img = tf.image.resize_bilinear(self.real_image, (8*mult, 11*mult))
-					rnd = tf.random_uniform((batch_size, 1, 1, 1), 0.0, 1.0)
-					hat_img = real_img + (image - real_img)*rnd
-					self.real_images.append(real_img)
-					self.hat_images.append(hat_img)
-					if i%2 == 1:
-						self.real_discs.append(_discriminator(real_img, None, None, layers, self.lerp))
-						self.fake_discs.append(_discriminator(image, None, None, layers, self.lerp))
-						self.hat_discs.append(_discriminator(hat_img, None, None, layers, self.lerp))
-					else:
-						self.real_discs.append(_discriminator(real_img, None, None, layers, None))
-						self.fake_discs.append(_discriminator(image, None, None, layers, None))
-						self.hat_discs.append(_discriminator(hat_img, None, None, layers, None))
-				self.discriminator_variables = scope.trainable_variables()
-			with tf.variable_scope('Loss'):
-				self.losses_g = []
-				self.losses_d = []
-				self.gradient_penalties = []
-				for real_img, fake_img, hat_img, real_d, fake_d, hat_d in\
-					zip(self.real_images, self.fake_images, self.hat_images, self.real_discs, self.fake_discs, self.hat_discs):
-					self.losses_g.append(-tf.reduce_mean(fake_d))
-					gradients = tf.gradients(hat_d, hat_img)
-					slope = tf.sqrt(tf.reduce_sum(tf.square(gradients), [1, 2, 3]))
-					gp = tf.reduce_mean(tf.square(slope-1.0))
-					self.gradient_penalties.append(gp)
-					self.losses_d.append(tf.losses.compute_weighted_loss(
-						[tf.reduce_mean(fake_d), tf.reduce_mean(real_d), gp, tf.reduce_mean(tf.square(fake_d))],
-						[1.0, -1.0, 10.0, 0.001]
-					))
+			self.image = get_art_only_cropped(batch_size=BATCH_SIZE)
+			self.gans = list(_get_all_gans(self.seed, self.image, self.lerp, training))
 			with tf.variable_scope('Trainer'):
 				self.trainer_g = []
 				self.trainer_d = []
 				adam_d = tf.train.AdamOptimizer(learning_rate, 0.0, 0.9, name='AdamD')
-				adam_g = tf.train.AdamOptimizer(learning_rate, 0.0, 0.9, name='AdamG')
-				with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-					for ld, lg in zip(self.losses_d, self.losses_g):
-						self.trainer_d.append(adam_d.minimize(ld, var_list=self.discriminator_variables))
-						self.trainer_g.append(adam_g.minimize(lg, global_step=self.global_step, var_list=self.generator_variables))
+				adam_g = tf.train.AdamOptimizer(learning_rate*0.5, 0.0, 0.9, name='AdamG')
+				for i, g in enumerate(self.gans):
+					#Only use those variables and calculations that are needed
+					scope_g = self.name+'/Generator[0-%d]'%i
+					vars_g = tf.trainable_variables(scope_g)
+					upds_g = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope_g)
+					scope_d = self.name+'/Discriminator[0-%d]'%i
+					vars_d = tf.trainable_variables(scope_d)
+					upds_d = tf.get_collection(tf.GraphKeys.UPDATE_OPS, scope_d)
+					#Add to the trainer lists
+					with tf.control_dependencies(upds_d+upds_g):
+						self.trainer_d.append(adam_d.minimize(g[-1], var_list=vars_d))
+						self.trainer_g.append(adam_g.minimize(g[-2], global_step=self.global_step, var_list=vars_g))
 			with tf.variable_scope('Summary'):
-				self.measure = tf.get_variable('Measure', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
+				#Summaries through variables because of different resolutions
+				self.measure = tf.get_variable('Distance', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
 				self.gradient_penalty = tf.get_variable('GradientPenalty', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
 				self.loss_d = tf.get_variable('LossD', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
 				self.loss_g = tf.get_variable('LossG', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
 				self.generated = tf.get_variable('Generated', [4, IMAGE_HEIGHT, IMAGE_WIDTH, 3], tf.float32, trainable=False, initializer=tf.initializers.zeros)
 				self.summaries = []
-				for ld, lg, gp, fi in zip(self.losses_d, self.losses_g, self.gradient_penalties, self.fake_images):
+				self.measure_update = []
+				for img, diff, gp, lg, ld in self.gans:
+					measure_update = tf.assign(self.measure, 0.9*self.measure+0.1*diff)
+					self.measure_update.append(measure_update)
 					self.summaries.append(tf.group(
-						tf.assign(self.measure, 0.95*self.measure-0.05*ld),
+						measure_update,
 						tf.assign(self.loss_d, ld),
 						tf.assign(self.loss_g, lg),
-						tf.assign(self.generated, tf.image.resize_nearest_neighbor(fi[:4,:,:,:], [IMAGE_HEIGHT, IMAGE_WIDTH]))
+						tf.assign(self.gradient_penalty, gp),
+						tf.assign(self.generated, tf.image.resize_nearest_neighbor(img[:4,:,:,:], [IMAGE_HEIGHT, IMAGE_WIDTH]))
 					))
-			tf.summary.scalar("Measure", self.measure)
+			tf.summary.scalar("Distance", self.measure)
 			tf.summary.scalar("GradientPenalty", self.gradient_penalty)
 			tf.summary.scalar("LossD", self.loss_d)
 			tf.summary.scalar("LossG", self.loss_g)
@@ -146,13 +152,13 @@ class PgGanGenerator(Generator):
 		if session is None:
 			session = self.session
 		step = self.global_step.eval(session)
-		lod = min(step // ITERATIONS_PER_LOD, 8)
+		lod = min(step // ITERATIONS_PER_LOD, 7)
 		for _ in range(5):
-			session.run(self.trainer_d[lod], {self.lerp: min(1.0, (step%ITERATIONS_PER_LOD)/ITERATIONS_PER_LOD)})
+			session.run(self.trainer_d[lod])
 		if summary:
 			_, _, step, res = session.run([self.trainer_g[lod], self.summaries[lod], self.global_step, self.measure])
 			self.add_summary(session.run(self.summary), step)
 		else:
-			_, step, res = session.run([self.trainer_g[lod], self.global_step, self.measure])
+			_, _, step, res = session.run([self.trainer_g[lod], self.measure_update[lod], self.global_step, self.measure])
 		return step, res
 
