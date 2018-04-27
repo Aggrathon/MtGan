@@ -53,7 +53,7 @@ def get_art_only_data(list_file=ART_LIST, batch_size=32):
     """
     return get_image_only_data(list_file, batch_size, _read_image_random)
 
-def get_art_only_cropped(art_list=ART_WHITE_LIST, batch_size=32):
+def get_art_only_cropped(art_list=ART_GREEN_LIST, batch_size=32):
     """
         Returns a dataset containing cropped art
     """
