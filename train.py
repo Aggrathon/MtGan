@@ -14,20 +14,23 @@ def train():
     """
         Train the neural network
     """
-    old_time = timer()
-    new_time = timer()
+    start_time = timer()
+    next_time = start_time
     generator = Generator()
     with generator:
         print("Starting the training")
-        for i in range(1000):
+        print("Iteration    Time     Distance")
+        #      123456:123456:12:12:123456.89
+        for i in range(600): # 60 * 10 * 600 + ish = 100h + ish
             step, result = generator.train_step(summary=True)
             if i%10 == 9:
                 generator.save()
-                print('\t'*6+'saved', end='\r')
-            new_time = timer()
-            print('%6d:  \t%2.2fs  \t%2.2f'%(step, new_time-old_time, result))
-            old_time = new_time
-            for _ in range(19):
+                print('                                saved', end='\r')
+                #      123456:123456:12:12:123456.89
+            time = timer() - start_time
+            print('%6d:%6d:%02d:%02d%9.2f'%(step, time//3600, time//60, int(time%60), result))
+            next_time = timer() + 60.0
+            while timer() < next_time:
                 step, result = generator.train_step()
                 if math.isnan(result):
                     print('Training Failed (%d)'%step)
