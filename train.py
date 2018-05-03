@@ -7,7 +7,8 @@ import tensorflow as tf
 #from models.wgan_gp import ArtGeneratorWGANGP as Generator
 #from models.pg_gan import PgGanGenerator as Generator
 #from models.skip_gan import SkipGanGenerator as Generator
-from models.small_gan import SmallGanGenerator as Generator
+#from models.small_gan import SmallGanGenerator as Generator
+from models.residual_gan import ResidualGenerator as Generator
 
 
 def train():
@@ -21,14 +22,14 @@ def train():
         print("Starting the training")
         print("Iteration    Time     Distance")
         #      123456:123456:12:12:123456.89
-        for i in range(600): # 60 * 10 * 600 + ish = 100h + ish
+        for i in range(6000): # 60 * 6000 + ish = 100h + ish
             step, result = generator.train_step(summary=True)
             if i%10 == 9:
                 generator.save()
                 print('                                saved', end='\r')
                 #      123456:123456:12:12:123456.89
             time = timer() - start_time
-            print('%6d:%6d:%02d:%02d%9.2f'%(step, time//3600, time//60, int(time%60), result))
+            print('%6d:%6d:%02d:%02d%9.2f'%(step, time//3600, (time//60)%60, int(time)%60, result))
             next_time = timer() + 60.0
             while timer() < next_time:
                 step, result = generator.train_step()
@@ -39,5 +40,5 @@ def train():
                     return
 
 if __name__ == "__main__":
-    tf.logging.set_verbosity(tf.logging.DEBUG)
+    tf.logging.set_verbosity(tf.logging.INFO)
     train()
