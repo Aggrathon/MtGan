@@ -59,7 +59,7 @@ def _discriminator(data, reuse=False, training=True):
         prev_layer = _dis_res_layer(prev_layer, size*4, training, 'layer2')
         prev_layer = _dis_res_layer(prev_layer, size*8, training, 'layer3')
         prev_layer = tf.layers.flatten(prev_layer)
-        prev_layer = tf.layers.dropout(prev_layer, 0.0, training=training)
+        #prev_layer = tf.layers.dropout(prev_layer, 0.3, training=training)
         prev_layer = tf.layers.dense(prev_layer, 1, name='logits_wgan')
         if reuse:
             return prev_layer
@@ -74,23 +74,23 @@ class VariedGenerator(Generator):
     def __init__(self, training=True):
         super().__init__('residual-gan')
         with self.scope:
+            #generated
             self.seed = tf.random_uniform((BATCH_SIZE, CODE_SIZE), -1.0, 1.0)
-            self.real_image = tf.image.resize_bilinear(get_art_only_cropped(art_list=ART_WHITE_LIST, batch_size=BATCH_SIZE), (HEIGHT, WIDTH))
-            self.fake_image, gen_vars = _generator(self.seed, False, training)
-            self.real_critic, disc_vars = _discriminator(self.real_image, False, training)
-            mixed_image = self.fake_image + tf.maximum(0.0, tf.random_uniform([BATCH_SIZE, 1, 1, 1], -0.2, 0.6)) * (self.real_image - self.fake_image)
-            def gen():
-                while True:
-                    yield mixed_image.eval(session=self.session)
-            f_i = tf.data.Dataset.from_generator(gen, tf.float32, [BATCH_SIZE, HEIGHT, WIDTH, 3]) \
-                .apply(tf.contrib.data.unbatch()).shuffle(BATCH_SIZE*4, None, True).prefetch(BATCH_SIZE*2) \
-                .batch(BATCH_SIZE).make_one_shot_iterator().get_next()
-            self.fake_critic = _discriminator(f_i, True, training)
-            self.generator_critic = _discriminator(self.fake_image, True, training)
+            self.generated_image, gen_vars = _generator(self.seed, False, training)
+            self.generator_critic, disc_vars = _discriminator(self.generated_image, False, training)
+            #real
+            real_imgs = tf.image.resize_bilinear(get_art_only_cropped(art_list=ART_WHITE_LIST, batch_size=BATCH_SIZE*2), (HEIGHT, WIDTH))
+            self.real_image = real_imgs[:BATCH_SIZE,:,:,:]
+            self.real_critic = _discriminator(self.real_image, True, training)
+            #fake
+            lerp = tf.random_uniform([BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
+            lerp = (lerp + lerp*lerp)*0.25
+            self.fake_image = self.generated_image + lerp * (real_imgs[BATCH_SIZE:,:,:,:] - self.generated_image)
+            self.fake_critic = _discriminator(self.fake_image, True, training)
             #gp
-            x_hat = self.real_image + tf.random_uniform([BATCH_SIZE, 1, 1, 1], 0.0, 1.0) * (self.fake_image - self.real_image)
-            y_hat = _discriminator(x_hat, True, training)
-            gradients = tf.gradients(y_hat, x_hat)
+            self.gp_image = self.real_image + tf.random_uniform([BATCH_SIZE, 1, 1, 1], 0.0, 1.0) * (self.generated_image - self.real_image)
+            self.gp_critic = _discriminator(self.gp_image, True, training)
+            gradients = tf.gradients(self.gp_critic, self.gp_image)
             slope = tf.sqrt(tf.reduce_sum(tf.square(gradients), [1, 2, 3]))
             self.gradient_penalty = tf.reduce_mean(tf.square(slope-1.0), name='gradient_penalty')
             #losses
@@ -98,7 +98,7 @@ class VariedGenerator(Generator):
             rmf = tf.reduce_mean(self.fake_critic)
             rmr = tf.reduce_mean(self.real_critic)
             diff = rmr - rmg
-            center = tf.reduce_mean(tf.square(self.real_critic - 1.0))
+            center = tf.reduce_mean(tf.square(self.real_critic))
             self.loss_g = tf.losses.compute_weighted_loss([rmg], [-1.0])
             self.loss_d = tf.losses.compute_weighted_loss(
                 [rmf, rmr, self.gradient_penalty, center],
@@ -110,15 +110,12 @@ class VariedGenerator(Generator):
             self.distance = tf.get_variable('distance', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
             distance = tf.assign(self.distance, 0.9*self.distance + 0.1*diff)
             #training
+            lr = tf.maximum(LEARNING_RATE*0.1, (1.0-tf.to_float(self.global_step)*1e-5)*LEARNING_RATE)
             with tf.control_dependencies(tf.get_collection(tf.GraphKeys.UPDATE_OPS)):
-                adam_d = tf.train.AdamOptimizer(LEARNING_RATE*2, 0, 0.9, name='AdamD')
-                self.trainer_d = adam_d.minimize(
-                    self.loss_d,
-                    var_list=disc_vars,
-                    name='train_d'
-                )
+                adam_d = tf.train.AdamOptimizer(lr, 0, 0.9, name='AdamD')
+                self.trainer_d = adam_d.minimize(self.loss_d, var_list=disc_vars, name='train_d')
                 trainer_d2 = adam_d.minimize(loss_d2, var_list=disc_vars, name='train_d2')
-                trainer_g = tf.train.AdamOptimizer(LEARNING_RATE*0.5, 0, 0.9, name='AdamG').minimize(
+                trainer_g = tf.train.AdamOptimizer(lr, 0, 0.9, name='AdamG').minimize(
                     self.loss_g,
                     global_step=self.global_step,
                     var_list=gen_vars,
@@ -130,7 +127,7 @@ class VariedGenerator(Generator):
             tf.summary.scalar("GradientPenalty", self.gradient_penalty)
             tf.summary.scalar("LossD", self.loss_d)
             tf.summary.scalar("LossG", self.loss_g)
-            tf.summary.image("Generated", self.fake_image, 4)
+            tf.summary.image("Generated", self.generated_image, 4)
 
     def train_step(self, summary=False, session=None):
         """
@@ -138,13 +135,14 @@ class VariedGenerator(Generator):
         """
         if session is None:
             session = self.session
-        step = session.run(self.global_step)
+        step = self.global_step.eval(session=session)
         if step < 800:
+            session.run(self.trainer_d)
             session.run(self.trainer_d)
             if step < 100:
                 session.run(self.trainer_d)
                 session.run(self.trainer_d)
-        for _ in range(4):
+        for _ in range(3):
             session.run(self.trainer_d)
         if summary:
             _, smry, step, res = session.run([self.trainer_g, self.summary, self.global_step, self.distance])
