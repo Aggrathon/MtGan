@@ -27,6 +27,10 @@ ART_BLUE_FILE = DIRECTORY / 'art_blue.txt'
 ART_WHITE_FILE = DIRECTORY / 'art_white.txt'
 ART_NOCOLOR_FILE = DIRECTORY / 'art_nocolor.txt'
 
+ART_ANGELS = DIRECTORY / 'art_angels.txt'
+ART_ELVES = DIRECTORY / 'art_elves.txt'
+ART_DRAGONS = DIRECTORY / 'art_dragons.txt'
+
 
 def download_db(overwrite=False):
     """
@@ -224,15 +228,32 @@ def split_colors(overwrite=False):
             with open(paht, 'w') as f:
                 f.write('\n'.join(array))
 
-
-#TODO: Transform into TfRecords?
+def get_theme(subtype='Angel', file=ART_ANGELS, overwrite=False):
+    if not overwrite and os.path.isfile(file):
+        return
+    print("Creating list of", subtype)
+    files = []
+    db = pd.read_csv(str(OUT_FILE), encoding='utf-8')
+    if type(subtype) is str:
+        subtype = [subtype]
+    for i, line in db.iterrows():
+        if type(line['subtypes']) is str:
+            for st in subtype:
+                if st in line['subtypes']:
+                    files.append(line['art'])
+                    break
+    with open(file, 'w') as f:
+        f.write('\n'.join(files))
 
 
 if __name__ == "__main__":
-    download_db()
-    download_images()
-    check_image_dimensions()
-    #plot_image_dimensions()
-    cull_cards()
-    crop_art()
-    split_colors()
+    # download_db()
+    # download_images()
+    # check_image_dimensions()
+    # #plot_image_dimensions()
+    # cull_cards()
+    # crop_art()
+    # split_colors()
+    #get_theme('Angel', ART_ANGELS)
+    #get_theme('Elf', ART_ELVES)
+    get_theme(['Dragon', 'Drake'], ART_DRAGONS)

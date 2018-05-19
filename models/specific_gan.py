@@ -3,9 +3,10 @@
 """
 
 import tensorflow as tf
-from models.model import get_art_only_cropped, Generator, ART_WHITE_LIST
+from models.model import get_art_only_cropped, BaseGenerator
+from prepare_data import ART_DRAGONS as ART
 
-BATCH_SIZE = 64
+BATCH_SIZE = 80
 CODE_SIZE = 100
 WIDTH = 5*2**4
 HEIGHT = 4*2**4
@@ -15,11 +16,12 @@ def _gen_res_layer(prev_layer, size, training=True, name='gen_res_layer'):
     with tf.variable_scope(name):
         skip = tf.image.resize_nearest_neighbor(prev_layer, tf.shape(prev_layer)[1:3]*2)
         skip = tf.layers.conv2d(skip, size, 1)
-        prev_layer = tf.nn.elu(prev_layer)
+        prev_layer = tf.nn.leaky_relu(prev_layer)
         prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
-        prev_layer = tf.layers.conv2d_transpose(prev_layer, size, 3, 2, 'same', activation=tf.nn.elu)
+        prev_layer = tf.layers.conv2d_transpose(prev_layer, size, 3, 2, 'same', activation=tf.nn.leaky_relu)
+        prev_layer = tf.layers.conv2d(prev_layer, size, 1, 1, 'same', activation=tf.nn.leaky_relu)
         prev_layer = tf.layers.batch_normalization(prev_layer, training=training)
-        prev_layer = tf.layers.conv2d(prev_layer, size, 1)
+        prev_layer = tf.layers.conv2d(prev_layer, size, 3, 1, 'same')
         return skip + prev_layer
 
 def _generator(data, reuse=False, training=True):
@@ -45,7 +47,7 @@ def _dis_res_layer(prev_layer, size, training=True, name='dis_res_layer'):
         skip = tf.layers.conv2d(skip, size, 1)
         prev_layer = tf.nn.leaky_relu(prev_layer)
         prev_layer = tf.contrib.layers.layer_norm(prev_layer)
-        prev_layer = tf.layers.conv2d(prev_layer, size, 3, 1, 'same', activation=tf.nn.relu)
+        prev_layer = tf.layers.conv2d(prev_layer, size, 3, 1, 'same', activation=tf.nn.leaky_relu)
         prev_layer = tf.contrib.layers.layer_norm(prev_layer)
         prev_layer = tf.layers.conv2d(prev_layer, size, 3, 2, 'same')
         return skip + prev_layer
@@ -59,33 +61,35 @@ def _discriminator(data, reuse=False, training=True):
         prev_layer = _dis_res_layer(prev_layer, size*4, training, 'layer2')
         prev_layer = _dis_res_layer(prev_layer, size*8, training, 'layer3')
         prev_layer = tf.layers.flatten(prev_layer)
-        #prev_layer = tf.layers.dropout(prev_layer, 0.3, training=training)
+        prev_layer = tf.layers.dense(prev_layer, size*8, activation=tf.nn.leaky_relu)
+        prev_layer = tf.layers.dropout(prev_layer, 0.3, training=training)
         prev_layer = tf.layers.dense(prev_layer, 1, name='logits_wgan')
         if reuse:
             return prev_layer
         else:
             return prev_layer, scope.trainable_variables()
 
-class VariedGenerator(Generator):
+class Generator(BaseGenerator):
     """
         Small Gan Neural Network
     """
 
     def __init__(self, training=True):
-        super().__init__('residual-gan')
+        super().__init__('specific-gan')
         with self.scope:
+            self.distance = tf.get_variable('distance', [], tf.float32, trainable=False, initializer=tf.initializers.ones)
             #generated
             self.seed = tf.random_uniform((BATCH_SIZE, CODE_SIZE), -1.0, 1.0)
             self.generated_image, gen_vars = _generator(self.seed, False, training)
             self.generator_critic, disc_vars = _discriminator(self.generated_image, False, training)
             #real
-            real_imgs = tf.image.resize_bilinear(get_art_only_cropped(art_list=ART_WHITE_LIST, batch_size=BATCH_SIZE*2), (HEIGHT, WIDTH))
-            self.real_image = real_imgs[:BATCH_SIZE,:,:,:]
+            self.real_image = tf.image.resize_bilinear(get_art_only_cropped(art_list=ART, batch_size=BATCH_SIZE), (HEIGHT, WIDTH))
             self.real_critic = _discriminator(self.real_image, True, training)
             #fake
             lerp = tf.random_uniform([BATCH_SIZE, 1, 1, 1], 0.0, 1.0)
-            lerp = (lerp*2 + lerp*lerp)/6
-            self.fake_image = self.generated_image + lerp * (real_imgs[BATCH_SIZE:,:,:,:] - self.generated_image)
+            scale = tf.maximum(0.0, tf.minimum(10.0, self.distance))
+            lerp = tf.maximum(0.0, lerp*scale + lerp*lerp - 0.1)/(2.0*(scale+0.9))
+            self.fake_image = self.generated_image + lerp * (self.real_image - self.generated_image)
             self.fake_critic = _discriminator(self.fake_image, True, training)
             #gp
             self.gp_image = self.real_image + tf.random_uniform([BATCH_SIZE, 1, 1, 1], 0.0, 1.0) * (self.generated_image - self.real_image)
@@ -106,8 +110,6 @@ class VariedGenerator(Generator):
             loss_d2 = tf.losses.compute_weighted_loss(
                 [rmg, rmr, self.gradient_penalty, center],
                 [1.0, -1.0, 10.0, 0.001])
-            #meta
-            self.distance = tf.get_variable('distance', [], tf.float32, trainable=False, initializer=tf.initializers.zeros)
             distance = tf.assign(self.distance, 0.9*self.distance + 0.1*diff)
             #training
             learning_rate = tf.maximum(0.1, tf.minimum(1.0, distance*2.0)) * LEARNING_RATE

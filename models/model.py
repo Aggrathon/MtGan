@@ -42,8 +42,8 @@ def get_image_only_data(list_file=IMAGE_LIST, batch_size=32, image_processor=_re
     """
     with tf.device('/cpu:0'):
         textfile = tf.data.TextLineDataset(str(list_file))
-        shuffled = textfile.cache().repeat().shuffle(30000)
-        images = shuffled.map(image_processor, 8).prefetch(batch_size*4)
+        shuffled = textfile.cache().repeat().shuffle(5000)
+        images = shuffled.map(image_processor, 8).prefetch(batch_size*2)
         batch = images.batch(batch_size).make_one_shot_iterator().get_next()
         return tf.reshape(batch, (batch_size, image_height, image_width, 3))
 
@@ -60,7 +60,7 @@ def get_art_only_cropped(art_list=ART_GREEN_LIST, batch_size=32):
     return get_image_only_data(art_list, batch_size, _read_image_random_crop, 8*16, 10*16)
 
 
-class Generator():
+class BaseGenerator():
     """
         Base class for all generators
     """
