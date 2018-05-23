@@ -5,7 +5,7 @@ import sys
 import tensorflow as tf
 import numpy as np
 from matplotlib import pyplot as plt
-from models.specific_gan import Generator, WIDTH, HEIGHT, CODE_SIZE
+from models.specific_gan import Generator, WIDTH, HEIGHT
 
 def _latent_seed(grid_size, generator):
     index = 0
@@ -25,9 +25,8 @@ def _latent_seed(grid_size, generator):
             index += 1
     return seed
 
-def grid(latent=False, number=1):
-    grid_size = 5
-    generator = Generator()
+def grid(latent=False, number=1, grid_size=5):
+    generator = Generator(False, grid_size*grid_size+4)
     image = tf.contrib.gan.eval.image_grid( \
         generator.generated_image[:grid_size*grid_size, :, :, :],
         [grid_size, grid_size],

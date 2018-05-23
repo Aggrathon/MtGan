@@ -11,6 +11,7 @@ import tensorflow as tf
 #from models.residual_gan import ResidualGenerator as Generator
 #from models.varied2_gan import VariedGenerator as Generator
 from models.specific_gan import Generator
+#from models.dragon_gan import Generator
 
 
 def train():

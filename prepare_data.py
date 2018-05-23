@@ -10,6 +10,7 @@ import csv
 import pandas as pd
 from PIL import Image
 import matplotlib.pyplot as plt
+from matplotlib.widgets import Button
 
 DIRECTORY = Path("data")
 IMAGES = DIRECTORY / 'images'
@@ -30,6 +31,7 @@ ART_NOCOLOR_FILE = DIRECTORY / 'art_nocolor.txt'
 ART_ANGELS = DIRECTORY / 'art_angels.txt'
 ART_ELVES = DIRECTORY / 'art_elves.txt'
 ART_DRAGONS = DIRECTORY / 'art_dragons.txt'
+ART_HUMANS = DIRECTORY / 'art_humans.txt'
 
 
 def download_db(overwrite=False):
@@ -245,6 +247,30 @@ def get_theme(subtype='Angel', file=ART_ANGELS, overwrite=False):
     with open(file, 'w') as f:
         f.write('\n'.join(files))
 
+def check_list(file=ART_ANGELS):
+    data = []
+    with open(file) as f:
+        l = f.readline().strip()
+        while l != "":
+            plt.imshow(plt.imread(l))
+            axprev = plt.axes([0.7, 0.05, 0.1, 0.075])
+            axnext = plt.axes([0.81, 0.05, 0.1, 0.075])
+            bnext = Button(axnext, 'Keep')
+            def kp(event):
+                data.append(l)
+                plt.close()
+            bnext.on_clicked(kp)
+            bprev = Button(axprev, 'Remove')
+            def rm(event):
+                plt.close()
+            bprev.on_clicked(rm)
+            plt.title(l)
+            plt.show()
+            l = f.readline().strip()
+    with open(file, 'w') as f:
+        f.write('\n'.join(data))
+    print("List Updated")
+
 
 if __name__ == "__main__":
     # download_db()
@@ -256,4 +282,7 @@ if __name__ == "__main__":
     # split_colors()
     #get_theme('Angel', ART_ANGELS)
     #get_theme('Elf', ART_ELVES)
-    get_theme(['Dragon', 'Drake'], ART_DRAGONS)
+    #get_theme(['Dragon', 'Drake'], ART_DRAGONS)
+    #check_list(ART_DRAGONS)
+    #check_list(ART_ANGELS)
+    get_theme(['Human'], ART_HUMANS)

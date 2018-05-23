@@ -78,7 +78,8 @@ class BaseGenerator():
         """
             Restore a saved model or initialize a new one
         """
-        if session is None: session = self.session
+        if session is None:
+            session = self.session
         self.saver = tf.train.Saver()
         self.summary = tf.summary.merge_all()
         self.summary_writer = tf.summary.FileWriter(str(DIRECTORY / self.name))
@@ -94,7 +95,8 @@ class BaseGenerator():
         """
             Save the current model
         """
-        if session is None: session = self.session
+        if session is None:
+            session = self.session
         self.saver.save(session, str(DIRECTORY / self.name / 'model'), self.global_step)
 
     def train_step(self, summary=False, session=None):
@@ -103,7 +105,7 @@ class BaseGenerator():
         """
         if session is None:
             session = self.session
-    
+
     def add_summary(self, event, step):
         """
             Write a tensorboard summary
