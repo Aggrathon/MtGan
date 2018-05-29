@@ -32,6 +32,8 @@ ART_ANGELS = DIRECTORY / 'art_angels.txt'
 ART_ELVES = DIRECTORY / 'art_elves.txt'
 ART_DRAGONS = DIRECTORY / 'art_dragons.txt'
 ART_HUMANS = DIRECTORY / 'art_humans.txt'
+ART_WIZARDS = DIRECTORY / 'art_wizards.txt'
+ART_WARRIORS = DIRECTORY / 'art_warriors.txt'
 
 
 def download_db(overwrite=False):
@@ -271,18 +273,34 @@ def check_list(file=ART_ANGELS):
         f.write('\n'.join(data))
     print("List Updated")
 
+def check_type_freq(num_top_types=15, interests=['Dragon', 'Drake', 'Mage', 'Sorcerer']):
+    db = pd.read_csv(str(OUT_FILE), encoding='utf-8')
+    from collections import defaultdict
+    dictionary = defaultdict(int)
+    for i, line in db.iterrows():
+        st = line['subtypes']
+        if type(st) is str:
+            for s in st.split(','):
+                s = s[1:].replace("'", '').replace(']', '')
+                dictionary[s] += 1
+    for i, w in enumerate(sorted(dictionary, key=dictionary.get, reverse=True)):
+        if i < num_top_types or w in interests:
+            print("%3d.%10s%6d"%(i+1, w, dictionary[w]))
 
 if __name__ == "__main__":
     # download_db()
     # download_images()
     # check_image_dimensions()
-    # #plot_image_dimensions()
+    # plot_image_dimensions()
     # cull_cards()
     # crop_art()
     # split_colors()
-    #get_theme('Angel', ART_ANGELS)
-    #get_theme('Elf', ART_ELVES)
-    #get_theme(['Dragon', 'Drake'], ART_DRAGONS)
-    #check_list(ART_DRAGONS)
-    #check_list(ART_ANGELS)
-    get_theme(['Human'], ART_HUMANS)
+    # get_theme('Angel', ART_ANGELS)
+    # get_theme('Elf', ART_ELVES)
+    # get_theme(['Dragon', 'Drake'], ART_DRAGONS)
+    # check_list(ART_DRAGONS)
+    # check_list(ART_ANGELS)
+    # get_theme(['Human'], ART_HUMANS)
+    # check_type_freq()
+    # get_theme(['Wizard'], ART_WIZARDS)
+    get_theme(['Warrior', 'Soldier'], ART_WARRIORS)

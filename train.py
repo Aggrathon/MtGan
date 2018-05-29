@@ -10,8 +10,8 @@ import tensorflow as tf
 #from models.small_gan import SmallGanGenerator as Generator
 #from models.residual_gan import ResidualGenerator as Generator
 #from models.varied2_gan import VariedGenerator as Generator
-from models.specific_gan import Generator
-#from models.dragon_gan import Generator
+#from models.specific_gan import Generator
+from models.wizard_gan import Generator
 
 
 def train():

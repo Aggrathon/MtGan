@@ -5,14 +5,13 @@ import sys
 import tensorflow as tf
 import numpy as np
 from matplotlib import pyplot as plt
-from models.specific_gan import Generator, WIDTH, HEIGHT
+from models.specific_gan import Generator
 
 def _latent_seed(grid_size, generator):
     index = 0
     seed, scores = generator.session.run([generator.seed, generator.generator_critic])
     for i in range(1, 5):
         x = np.argmax(scores[:-i])
-        print(x, scores)
         seed[-i] = seed[x]
         scores[x] -= 1000
     for i in range(grid_size):
@@ -25,12 +24,12 @@ def _latent_seed(grid_size, generator):
             index += 1
     return seed
 
-def grid(latent=False, number=1, grid_size=5):
+def grid(latent=False, number=1, grid_size=6):
     generator = Generator(False, grid_size*grid_size+4)
-    image = tf.contrib.gan.eval.image_grid( \
-        generator.generated_image[:grid_size*grid_size, :, :, :],
-        [grid_size, grid_size],
-        [HEIGHT, WIDTH], 3)
+    image = generator.generated_image[:grid_size*grid_size, :, :, :]
+    size = tf.shape(image)[1:3]*2
+    image = tf.image.resize_bicubic(image, size)
+    image = tf.contrib.gan.eval.image_grid(image, [grid_size, grid_size], size, 3)
     image = image[0] * 0.5 + 0.5
     with generator:
         for _ in range(number):
@@ -55,6 +54,6 @@ if __name__ == "__main__":
             grid(True, 1)
     else:
         if len(sys.argv) == 2:
-            grid(False, int(sys.argv[2]))
+            grid(False, int(sys.argv[1]))
         else:
             grid(False, 1)
